@@ -307,6 +307,7 @@ describe("xero operation outbox payload parsing", () => {
       "ORGANISER_EXTRA_ADJUSTMENT",
       "ADMIN_GRANT_CREDIT_NOTE",
       "ORGANISATION_CONTACT_DETAILS",
+      "AGE_UP_CREDIT",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
@@ -451,12 +452,28 @@ describe("xero operation outbox payload parsing", () => {
       ["ADDITIONAL_CAPTURE_RECEIPT", "PAYMENT"],
       ["ADMIN_GRANT_CREDIT_NOTE", "CREDIT_NOTE"],
       ["ORGANISATION_CONTACT_DETAILS", "CONTACT"],
+      ["AGE_UP_CREDIT", "CREDIT_NOTE"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       expect(getQueuedOutboxExpectedOperation(queueType).entityType).toBe(
         expectedEntityTypes.get(queueType)
       );
     }
+  });
+});
+
+describe("age-up credit payload (#5190 PR 3)", () => {
+  it("reads an adjustment id and expects a credit-note create on the adjustment", () => {
+    expect(readQueuedOutboxPayload({ queueType: "AGE_UP_CREDIT", adjustmentId: "adj_1", extra: true })).toEqual({
+      queueType: "AGE_UP_CREDIT",
+      adjustmentId: "adj_1",
+    });
+    expect(readQueuedOutboxPayload({ queueType: "AGE_UP_CREDIT" })).toBeNull();
+    expect(getQueuedOutboxExpectedOperation("AGE_UP_CREDIT")).toEqual({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModels: ["MemberSubscriptionAgeUpAdjustment"],
+    });
   });
 });
 

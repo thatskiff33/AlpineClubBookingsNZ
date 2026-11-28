@@ -1253,3 +1253,29 @@ stands, the sender throws, the recovery runner stops the row without a retry
 for the treasurer's "Paid another way", and a webhook sender holds the capture
 rather than ask for redelivery. Pins: `member-money-application-store.test.ts`,
 `member-money-applications.test.ts`, `member-money-refunds.test.ts`.
+
+## INV-MONEY-051
+
+Under *Their age today*, season billing starts at the season-start tier. When
+a birthday makes a member liable, the next confirmed annual run invoices the
+whole months left, including the birthday month (or joining month if later).
+The annual difference times months divided by twelve rounds half-up in cents.
+No DOB means the stored tier and no birthday adjustment.
+
+## INV-MONEY-052
+
+A move between paying tiers bills only a positive prorated difference. The
+top-up covers no additional member, and no more months than the season charge
+billed. One member and season identify one adjustment; neither a rerun, a
+corrected date of birth, nor voiding a top-up raises another.
+
+## INV-MONEY-053
+
+A negative difference is one positive credit, rounded on its magnitude. If
+the season invoice still owes at least that much, reserve that invoice on the
+adjustment, then allocate a Xero credit note to it; a retry keeps to the
+reserved invoice whatever it owes by then. Otherwise grant the full amount as
+one member credit lot and queue its credit note. A balance Xero does not
+report is not zero, and an invoice Xero holds voided, deleted or not yet
+approved is not a paid one: the credit waits for the season to be invoiced.
+Never use both routes or refund through Stripe.

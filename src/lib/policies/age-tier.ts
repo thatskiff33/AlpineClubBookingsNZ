@@ -108,7 +108,9 @@ export function getSeasonStartDate(seasonYear: number): Date {
  * function is given on the price path comes from
  * {@link getSeasonStartCalendarDate}, which always returns day 1 of a month, so
  * 28 February is unreachable as a reference and aligning the conventions would
- * move nobody's tier at any configured year-end month.
+ * move nobody's tier at any configured year-end month. The LIABILITY path under
+ * "Age today" (#5190 PR 3) does read any day: there a 29 February birthday
+ * counts from 1 March in a non-leap year, by this function's rule.
  *
  * SO DO NOT ALIGN THEM ANYWAY, for the honest reason rather than the false one:
  * the divergence is harmless and unreachable here, `member-age.ts` serves a

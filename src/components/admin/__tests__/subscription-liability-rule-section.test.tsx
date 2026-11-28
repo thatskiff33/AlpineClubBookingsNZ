@@ -185,13 +185,6 @@ describe("SubscriptionLiabilityRuleSection (#5190)", () => {
     expect(screen.getByText(/needs both Membership edit and Finance edit/)).toBeTruthy();
   });
 
-  it("does not offer age today until part-season invoices exist", async () => {
-    stubFetch();
-    render(<SubscriptionLiabilityRuleSection />);
-    await openEditor();
-    expect((screen.getByRole("radio", { name: /their age today/i }) as HTMLInputElement).disabled).toBe(true);
-  });
-
   it("saves only after a preview of exactly the chosen answers, and sends only the pair", async () => {
     const fetchMock = stubFetch({ clearedStaleRecords: 2 });
     render(<SubscriptionLiabilityRuleSection />);
@@ -402,5 +395,58 @@ describe("SubscriptionLiabilityRuleSection (#5190)", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByText("Sam Small")).toBeNull();
     expect((screen.getByRole("button", { name: "Save rule" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+// #5190 PR 3: "Their age today" is open for choice now that part-season
+// invoices, top-ups and credits exist (owner decisions 20 and 27 Nov 2026).
+describe("SubscriptionLiabilityRuleSection: age today (#5190 PR 3)", () => {
+  beforeEach(() => {
+    session.status = "authenticated";
+    session.membership = "edit";
+    session.finance = "edit";
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("offers every age source, season end included", async () => {
+    stubFetch();
+    render(<SubscriptionLiabilityRuleSection />);
+    await openEditor();
+    for (const name of [/first day of the season/i, /last day of the season/i, /their age today/i]) {
+      expect((screen.getByRole("radio", { name }) as HTMLInputElement).disabled).toBe(false);
+    }
+  });
+
+  it("tells the officer what an age-up costs and when it stops a booking", async () => {
+    stubFetch();
+    render(<SubscriptionLiabilityRuleSection />);
+    await openEditor();
+    const help = screen.getByRole("radio", { name: /their age today/i }).closest("label")?.textContent ?? "";
+    expect(help).toMatch(/part-season invoice/);
+    expect(help).toMatch(/top-up/);
+    expect(help).toMatch(/credit/);
+    expect(help).toMatch(/keep booking until that invoice or top-up is issued/);
+    expect(help).toMatch(/A credit never stops anyone booking/);
+  });
+
+  it("previews and saves age today as the pair", async () => {
+    const fetchMock = stubFetch({ clearedStaleRecords: 2 });
+    render(<SubscriptionLiabilityRuleSection />);
+    await openEditor();
+    choose("Their age group exempts them");
+    choose("their age today");
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
+    await screen.findByText("Sam Small");
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: "Save rule" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
+    await screen.findByText(/Rule saved/);
+    expect(JSON.parse(String(putCalls(fetchMock)[0]?.[1]?.body))).toEqual({
+      requiredTypeAgeRule: "AGE_TIER_EXEMPTS",
+      liabilityAgeSource: "CURRENT_AGE",
+    });
   });
 });

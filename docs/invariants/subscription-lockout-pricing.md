@@ -390,7 +390,10 @@ club's rule with the request's lockout mode or through its own transaction, neve
 from a second connection. The owner joins the
 FACTS batch only, never `repricedMemberIds`: an owner who is not staying holds no
 nights, so counting them as repriced would inflate the violation's count and emit
-a rate notice about a charge nobody received.
+a rate notice about a charge nobody received. Under *Their age today*, aging
+into liability does not block booking until the part-season invoice is issued.
+An issued unpaid or overdue top-up also blocks, even if the annual invoice is
+paid. A credit never blocks (`INV-MONEY-051`–`053`).
 
 ### INV-LOCKOUT-021
 

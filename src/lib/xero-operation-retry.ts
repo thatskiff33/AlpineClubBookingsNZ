@@ -31,6 +31,7 @@ import {
 } from "@/lib/xero-operation-retry-requeue-payloads";
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { organisationContactDetailsRetryLabel } from "@/lib/organisation-contact-details-payload";
+import { ageUpCreditRetryLabel } from "@/lib/age-up-credit-payload";
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -961,7 +962,7 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     return { supported: true, reason: null };
   }
   if (
-    isAdminGrantCreditNoteRetry(operation) &&
+    (isAdminGrantCreditNoteRetry(operation) || ageUpCreditRetryLabel(operation)) && // #5190 PR 3
     (operation.status === "FAILED" || operation.status === "PARTIAL")
   ) {
     return { supported: true, reason: null };
@@ -1361,7 +1362,7 @@ export async function retryXeroSyncOperation(
   }
 
   // #5245: a school's contact details row goes back to the outbox too, which reads the details fresh.
-  const storedPayloadRequeue = organisationContactDetailsRetryLabel(operation) ?? (isAdminGrantCreditNoteRetry(operation) ? "admin grant credit note" : null);
+  const storedPayloadRequeue = organisationContactDetailsRetryLabel(operation) ?? ageUpCreditRetryLabel(operation) ?? (isAdminGrantCreditNoteRetry(operation) ? "admin grant credit note" : null);
   if (storedPayloadRequeue) {
     await requeueOutboxRowForRetry(operation, null, ["FAILED", "PARTIAL"], storedPayloadRequeue);
     return { message: `Queued ${storedPayloadRequeue} retry.` };

@@ -6,6 +6,7 @@ import type {
 } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
+import { requireCalendarDate } from "@/lib/club-time";
 import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 import {
   effectiveSubscriptionBehavior,
@@ -29,6 +30,7 @@ import {
 // This holds the SQL form to the rule over the same members, for every setting.
 
 const SEASON = 2026;
+const today = requireCalendarDate("2026-07-01");
 
 // INFANT and CHILD are age-exempt; YOUTH and ADULT owe a subscription. The bands
 // cover every age, as the age-tier settings screen requires.
@@ -41,6 +43,8 @@ const AGE_TIER_SETTINGS: AgeTierSettingData[] = [
 
 const SETTINGS: SubscriptionLiabilitySettings[] = [
   { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
+  { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "CURRENT_AGE" },
+  { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "CURRENT_AGE" },
   { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
   { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_END" },
   { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START" },
@@ -110,6 +114,7 @@ function ruleSaysNotRequired(
     member,
     seasonRowStatus,
     seasonYear: SEASON,
+    today,
     ageTierSettings: AGE_TIER_SETTINGS,
     liabilitySettings,
   });
@@ -122,6 +127,7 @@ describe("subscriptionNotRequiredMemberConditions matches the shared liability r
       const where = {
         OR: subscriptionNotRequiredMemberConditions({
           seasonYear: SEASON,
+          today,
           ageTierSettings: AGE_TIER_SETTINGS,
           liabilitySettings,
         }),
@@ -144,6 +150,7 @@ describe("subscriptionNotRequiredMemberConditions matches the shared liability r
       const where = {
         OR: subscriptionNotRequiredMemberConditions({
           seasonYear: SEASON,
+          today,
           ageTierSettings: AGE_TIER_SETTINGS,
           liabilitySettings,
           includeSeasonRowExemption: false,
@@ -173,6 +180,7 @@ describe("subscriptionNotRequiredMemberConditions matches the shared liability r
       const sql = matchesWhere(asRow(organisation), {
         OR: subscriptionNotRequiredMemberConditions({
           seasonYear: SEASON,
+          today,
           ageTierSettings: AGE_TIER_SETTINGS,
           liabilitySettings,
         }),
@@ -197,6 +205,7 @@ describe("subscriptionNotRequiredMemberConditions matches the shared liability r
         NOT: {
           OR: subscriptionNotRequiredMemberConditions({
             seasonYear: SEASON,
+            today,
             ageTierSettings: AGE_TIER_SETTINGS,
             liabilitySettings,
           }),
@@ -266,6 +275,7 @@ describe("memberListSubscriptionFilterConditions matches the displayed status", 
       subscriptionBehavior: effectiveSubscriptionBehavior(member.assignment, member.role),
       member: { ...member, archivedAt: null },
       seasonYear: SEASON,
+      today,
       ageTierSettings: AGE_TIER_SETTINGS,
       liabilitySettings,
     };
@@ -284,6 +294,7 @@ describe("memberListSubscriptionFilterConditions matches the displayed status", 
   it.each(SETTINGS)("places every member under the filter its row shows, under %o", (liabilitySettings) => {
     const notRequiredConditions = subscriptionNotRequiredMemberConditions({
       seasonYear: SEASON,
+      today,
       ageTierSettings: AGE_TIER_SETTINGS,
       liabilitySettings,
     });
@@ -318,6 +329,7 @@ describe("memberListSubscriptionFilterConditions matches the displayed status", 
     expect(displayed(member, liabilitySettings)).toBe("NOT_INVOICED");
     const notRequiredConditions = subscriptionNotRequiredMemberConditions({
       seasonYear: SEASON,
+      today,
       ageTierSettings: AGE_TIER_SETTINGS,
       liabilitySettings,
     });

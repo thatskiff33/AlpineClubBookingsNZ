@@ -96,7 +96,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 /** The minimal delegate shape, so a structural fake can stand in for tests. */
-type ClubTimeSettingsDelegate = {
+export type ClubTimeSettingsDelegate = {
   findUnique: (args: {
     where: { id: string };
     select: { timeZone: true };
@@ -248,4 +248,30 @@ export async function readClubTimeZoneOutsideRequest(): Promise<ClubTimeZone> {
 /** Test hook: forget the warning throttle so a suite can observe the next one. */
 export function __resetClubTimeZoneRuntimeWarningForTests(): void {
   lastReadFailureWarnAt = 0;
+}
+
+/**
+ * The club's timezone read through the CALLER'S client (#5190 PR 3), for a
+ * reader that runs inside a transaction holding a lock and so must not take a
+ * second pooled connection (`INV-LOCK-004`). The same precedence as
+ * {@link resolveClubTimeZoneOutsideRequest}; a client with no
+ * `clubTimeSettings` delegate (a narrow test double) reads no row. A failed
+ * read REJECTS, unlike the reader above: the only caller judges whether a
+ * member may book, and must not judge it in a guessed calendar.
+ */
+export async function readClubTimeZoneThrough(db: {
+  clubTimeSettings?: ClubTimeSettingsDelegate;
+}): Promise<ClubTimeZone> {
+  const row = db.clubTimeSettings
+    ? await db.clubTimeSettings.findUnique({
+        where: { id: CLUB_TIME_SETTINGS_ID },
+        select: { timeZone: true },
+      })
+    : null;
+  const resolved = resolveClubTimeZone(row?.timeZone ?? null, readEnvironmentClubTimeZoneSeed());
+  try {
+    return requireClubTimeZone(resolved);
+  } catch {
+    return requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK);
+  }
 }

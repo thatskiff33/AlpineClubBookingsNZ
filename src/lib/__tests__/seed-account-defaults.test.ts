@@ -52,6 +52,7 @@ import {
   resolveSubscriptionLockoutPolicy,
 } from "@/lib/member-subscription-eligibility";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
+import { requireCalendarDate } from "@/lib/club-time";
 
 function moduleFlags(xeroIntegration: boolean) {
   return {
@@ -64,6 +65,9 @@ function moduleFlags(xeroIntegration: boolean) {
     internetBankingPayments: false,
   };
 }
+
+// The club's today on the frozen test clock; only "Age today" reads it.
+const TODAY = requireCalendarDate("2026-07-01");
 
 const adultRequiresSubscription: AgeTierSettingData[] = [
   {
@@ -389,6 +393,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       memberId: "m1",
       seasonYear: 2026,
       subscriptionBehavior: "REQUIRED",
+      today: TODAY,
     });
 
     expect(result).toEqual({ reconciled: true });
@@ -443,6 +448,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       memberId: "m1",
       seasonYear: 2026,
       subscriptionBehavior: "BASED_ON_AGE_TIER",
+      today: TODAY,
     });
 
     expect(result).toEqual({ reconciled: true });
@@ -458,6 +464,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       memberId: "m1",
       seasonYear: 2026,
       subscriptionBehavior: "REQUIRED",
+      today: TODAY,
     });
 
     expect(result).toEqual({ reconciled: false });
@@ -472,6 +479,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       memberId: "m1",
       seasonYear: 2026,
       subscriptionBehavior: "REQUIRED",
+      today: TODAY,
     });
 
     expect(result).toEqual({ reconciled: true });
@@ -487,6 +495,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       memberId: "m1",
       seasonYear: 2026,
       subscriptionBehavior: "BASED_ON_AGE_TIER",
+      today: TODAY,
     });
 
     expect(result).toEqual({ reconciled: false });
@@ -500,6 +509,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       memberId: "m1",
       seasonYear: 2026,
       subscriptionBehavior: "NOT_REQUIRED",
+      today: TODAY,
     });
 
     expect(result).toEqual({ reconciled: false });
@@ -515,6 +525,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       memberId: "m1",
       seasonYear: 2026,
       subscriptionBehavior: "REQUIRED",
+      today: TODAY,
     });
 
     expect(result).toEqual({ reconciled: false });
@@ -534,6 +545,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
         memberId: "m1",
         seasonYear: 2026,
         subscriptionBehavior: "REQUIRED",
+        today: TODAY,
       }),
     ).toEqual({ reconciled: true });
     expect(noActiveClaims.memberSubscription.updateMany).toHaveBeenCalledTimes(1);
@@ -549,6 +561,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
         memberId: "m1",
         seasonYear: 2026,
         subscriptionBehavior: "REQUIRED",
+        today: TODAY,
       }),
     ).toEqual({ reconciled: false });
     expect(activeClaim.memberSubscription.updateMany).not.toHaveBeenCalled();
@@ -564,6 +577,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       memberId: "m1",
       seasonYear: 2026,
       subscriptionBehavior: "REQUIRED",
+      today: TODAY,
     });
 
     expect(result).toEqual({ reconciled: false });
@@ -581,6 +595,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
         memberId: "m1",
         seasonYear: 2026,
         subscriptionBehavior: "REQUIRED",
+        today: TODAY,
       });
       expect(result).toEqual({ reconciled: false });
       expect(db.memberSubscription.updateMany).not.toHaveBeenCalled();
@@ -594,6 +609,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
         memberId: "m1",
         seasonYear: 2026,
         subscriptionBehavior: "REQUIRED",
+        today: TODAY,
       }),
     ).toEqual({ reconciled: false });
     expect(noRow.memberSubscription.updateMany).not.toHaveBeenCalled();
@@ -609,6 +625,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
         memberId: "m1",
         seasonYear: 2026,
         subscriptionBehavior: "REQUIRED",
+        today: TODAY,
       }),
     ).toEqual({ reconciled: false });
     expect(alreadyReconciled.memberSubscription.updateMany).not.toHaveBeenCalled();

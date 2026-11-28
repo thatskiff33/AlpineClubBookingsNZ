@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { requireCalendarDate } from "@/lib/club-time";
 
 // #5190 review: the impact list speaks for the members the billing run
 // considers, reading their season rows with the same untouched-row select the
@@ -54,6 +55,7 @@ describe("buildSubscriptionLiabilityImpact reads the billing population (#5190)"
     const impact = await buildSubscriptionLiabilityImpact({ member: { findMany } } as never, {
       seasonYear: 2026,
       proposed: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
+      today: requireCalendarDate("2026-07-01"),
     });
     const args = (findMany.mock.calls[0] as unknown as [
       { where: unknown; select: { subscriptions: { select: unknown } } },
@@ -71,6 +73,7 @@ describe("buildSubscriptionLiabilityImpact reads the billing population (#5190)"
       seasonYear: 2026,
       settings: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
       listSettings: { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" },
+      today: "2026-07-01",
     });
     expect(impact.staleRecords).toEqual([
       { memberId: "gone", name: "Archived Member", inBillingPopulation: false },

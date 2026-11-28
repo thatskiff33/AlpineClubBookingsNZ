@@ -42,6 +42,14 @@ export const XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE = "REFUND_NOTE_AWAITING_RESO
 export const ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE = "ADMIN_GRANT_NOTE_AWAITING_RETRY";
 
 /**
+ * #5190 PR 3: a mid-season age-up credit waiting in PENDING until the member's
+ * season invoice is raised in Xero, so it can be credited against it. Nothing
+ * was sent; the scan spaces the row out
+ * (`scanSpacesAgeUpCreditsAwaitingSeasonInvoice`).
+ */
+export const AGE_UP_CREDIT_AWAITING_SEASON_INVOICE_CODE = "AGE_UP_CREDIT_AWAITING_SEASON_INVOICE";
+
+/**
  * #4988 (`INV-CONFIG-008`): an operation waiting in PENDING because a line it
  * sends is in a tax category the club's Xero organisation cannot carry yet
  * (`XeroTaxCategoryUnavailableError`): unmapped, mapped in another

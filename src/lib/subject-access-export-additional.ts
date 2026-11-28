@@ -22,7 +22,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     DeletionRequest, AdminCreditAdjustmentRequest, OpeningCreditBatch, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
     McpGrant,
-    FoodOrder, FoodOrderItem, XeroCashCredit,
+    FoodOrder, FoodOrderItem, XeroCashCredit, MemberSubscriptionAgeUpAdjustment,
   ] = await Promise.all([
     prisma.membershipSubscriptionChargeCoverage.findMany({ where: own, select: { chargeId: true, releasedAt: true, createdAt: true } }),
     prisma.membershipBillingException.findMany({ where: own, select: { seasonYear: true, code: true, firstSeenAt: true, resolvedAt: true } }),
@@ -108,6 +108,15 @@ export async function readAdditionalSubjectRecords(memberId: string) {
           select: { kind: true, currencyCode: true, documentDate: true, totalCents: true, remainingCents: true, syncedAt: true },
         })
         : []),
+    // #5190 PR 3: their mid-season age-up top-ups and credits, through their
+    // own season rows (the row's `memberId` is a snapshot a merge keeps).
+    prisma.memberSubscriptionAgeUpAdjustment.findMany({
+      where: { memberSubscription: own },
+      select: {
+        seasonYear: true, ageUpDate: true, kind: true, status: true, fromAgeTier: true, toAgeTier: true,
+        coveredMonths: true, amountCents: true, description: true, createdAt: true,
+      },
+    }),
   ]);
   return {
     MembershipSubscriptionChargeCoverage, MembershipBillingException, SeasonalMembershipAssignment,
@@ -117,6 +126,6 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     DeletionRequest, AdminCreditAdjustmentRequest, OpeningCreditBatch, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
     McpGrant,
-    FoodOrder, FoodOrderItem, XeroCashCredit,
+    FoodOrder, FoodOrderItem, XeroCashCredit, MemberSubscriptionAgeUpAdjustment,
   } satisfies Record<AdditionalRecordModel, unknown>;
 }

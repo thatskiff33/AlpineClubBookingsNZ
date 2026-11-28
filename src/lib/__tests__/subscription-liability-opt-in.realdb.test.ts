@@ -267,6 +267,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
         data: { ...choice, updatedByMemberId: OFFICER_ID },
         liabilityAfterSave: choice,
         seasonYear: SEASON_YEAR,
+        today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
       });
     }
 
@@ -464,6 +465,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
       const { staleRecords } = await impact.buildSubscriptionLiabilityImpact(prisma, {
         seasonYear: SEASON_YEAR,
         proposed: CHOSEN_ALWAYS,
+        today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
       });
       const { clearedStaleRows } = await optIn(CHOSEN_ALWAYS);
 
@@ -613,6 +615,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
               memberId,
               seasonYear: SEASON_YEAR,
               subscriptionBehavior: "BASED_ON_AGE_TIER",
+              today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
             }),
           ),
         ).resolves.toEqual({ reconciled: false });
@@ -688,6 +691,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
             memberId,
             seasonYear: SEASON_YEAR,
             subscriptionBehavior: "BASED_ON_AGE_TIER",
+            today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
           }),
         );
         // Released whatever happens, so a failure here cannot strand the
@@ -747,6 +751,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
                 memberId,
                 seasonYear: SEASON_YEAR,
                 subscriptionBehavior: "BASED_ON_AGE_TIER",
+                today: clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE),
               }),
             );
             await released;
@@ -832,7 +837,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
 
     describe("the SQL date-of-birth check agrees with the TS rule at every tier birthday", () => {
       type Behavior = Extract<MembershipTypeSubscriptionBehavior, "REQUIRED" | "BASED_ON_AGE_TIER">;
-      const SOURCES = ["SEASON_START", "SEASON_END"] as const;
+      const SOURCES = ["SEASON_START", "SEASON_END", "CURRENT_AGE"] as const;
       const RULES = ["ALWAYS_OWES", "AGE_TIER_EXEMPTS"] as const;
       const MIN_AGES = [5, 13, 18];
 
@@ -854,7 +859,8 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
         financialYear.__setFinancialYearEndMonthForTesting(input.yearEndMonth);
         const { getSeasonStartCalendarDate } = await import("@/lib/policies/age-tier");
         const { getSeasonEndCalendarDate } = await import("@/lib/policies/subscription");
-        const references = [getSeasonStartCalendarDate(input.seasonYear), getSeasonEndCalendarDate(input.seasonYear)];
+        const today = clubTime.calendarDateOfDateOnlyInstant(DECISION_DATE);
+        const references = [getSeasonStartCalendarDate(input.seasonYear), getSeasonEndCalendarDate(input.seasonYear), today];
         const births = [...new Set(references.flatMap(boundaryBirths))].sort();
 
         const members: Array<{ id: string; behavior: Behavior; ageTier: AgeTier; dateOfBirth: Date | null }> = [];
@@ -881,6 +887,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
             const conditions = where.subscriptionNotRequiredMemberConditions({
               seasonYear: input.seasonYear,
               ageTierSettings: [...AGE_TIER_SETTINGS],
+              today,
               liabilitySettings,
             });
             const [notRequired, owing] = await Promise.all([
@@ -897,6 +904,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
                 seasonRowStatus: null,
                 seasonYear: input.seasonYear,
                 ageTierSettings: [...AGE_TIER_SETTINGS],
+                today,
                 liabilitySettings,
               });
               return tsNotRequired !== sqlNotRequired.has(member.id);

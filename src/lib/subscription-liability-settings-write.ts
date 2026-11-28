@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
+import type { CalendarDate } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 
@@ -30,8 +31,7 @@ type RequestedLiability = Partial<SubscriptionLiabilitySettings>;
  * half-choice would leave the club on a rule nobody chose. A club cannot be
  * moved back to `NOT_CHOSEN` — that state exists only so an upgrade changes
  * nobody silently — though a club still on it may save it unchanged.
- * `CURRENT_AGE` waits for part-season invoices (#5190's third pull request), so
- * it is refused until then.
+ * Every other age source, "Age today" included (#5190 PR 3), may be chosen.
  */
 function liabilityChoiceError(
   requested: RequestedLiability,
@@ -51,11 +51,8 @@ function liabilityChoiceError(
   if (unchangedNotChosen) {
     return null;
   }
-  if (requiredTypeAgeRule === "NOT_CHOSEN" || liabilityAgeSource === "NOT_CHOSEN") {
+  if (requiredTypeAgeRule === "NOT_CHOSEN" || !isChoosableLiabilityAgeSource(liabilityAgeSource)) {
     return "Choose both subscription liability answers; a chosen rule cannot be returned to not chosen.";
-  }
-  if (!isChoosableLiabilityAgeSource(liabilityAgeSource)) {
-    return "Age today cannot be chosen yet: it needs part-season subscription invoices.";
   }
   return null;
 }
@@ -151,6 +148,8 @@ export async function saveLockoutSettings(
     data: Omit<Prisma.MembershipLockoutSettingsUncheckedCreateInput, "id">;
     liabilityAfterSave: SubscriptionLiabilitySettings;
     seasonYear: number;
+    /** The club's today, resolved before the transaction (`INV-LOCK-004`). */
+    today: CalendarDate;
   },
 ) {
   const upsert = {
@@ -164,7 +163,7 @@ export async function saveLockoutSettings(
       clearedStaleRows: null as StaleNotRequiredClearUp | null,
     };
   }
-  const { seasonYear } = input;
+  const { seasonYear, today } = input;
   return db.$transaction(async (tx) => {
     await lockSubscriptionBillingSeason(tx, seasonYear);
     // No liability-rule key here (#5190 review): the upsert may wait on the
@@ -174,7 +173,7 @@ export async function saveLockoutSettings(
     // reads the rule this upsert wrote.
     const record = await tx.membershipLockoutSettings.upsert(upsert);
     const clearedStaleRows: StaleNotRequiredClearUp | null =
-      await clearStaleNotRequiredRows(tx, seasonYear);
+      await clearStaleNotRequiredRows(tx, seasonYear, today);
     return { record, clearedStaleRows };
   }, {
     // The season key may be held by a billing confirm for its whole budget.

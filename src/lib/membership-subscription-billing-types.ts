@@ -77,6 +77,35 @@ export type SubscriptionBillingPlanException = {
   context: Record<string, unknown>;
 };
 
+// #5190 PR 3 (INV-MONEY-052/053): a mid-season age-up's top-up or credit under
+// "Age today", planned beside the season charges. Confirm writes it as a
+// `MemberSubscriptionAgeUpAdjustment` (a TOP_UP also as a coverage-less charge).
+// A move from not owing to owing is an ordinary entry, not one of these.
+export type SubscriptionBillingAgeUpAdjustment = {
+  key: string;
+  kind: "TOP_UP" | "CREDIT";
+  seasonYear: number;
+  memberId: string;
+  memberName: string;
+  /** YYYY-MM-DD: the first day the new tier applies from. */
+  ageUpDate: string;
+  fromAgeTier: AgeTier;
+  toAgeTier: AgeTier;
+  coveredMonths: number;
+  fromAnnualCents: number;
+  toAnnualCents: number;
+  /** Positive: what the top-up invoices or the credit gives back. */
+  amountCents: number;
+  description: string;
+  membershipTypeId: string;
+  membershipTypeKey: string;
+  membershipTypeName: string;
+  recipient: { id: string; name: string; email: string };
+  /** A TOP_UP's invoice line account, from the subscriptionIncome mapping; null on a CREDIT. */
+  xeroAccountCode: string | null;
+  xeroItemCode: string | null;
+};
+
 export type SubscriptionBillingExemptMember =
   | { memberId: string; memberName: string; ageTier: AgeTier | null; exemptBy: "AGE_TIER" }
   | { memberId: string; memberName: string; ageTier: null; exemptBy: "MEMBERSHIP_TYPE"; membershipTypeName: string };
@@ -168,6 +197,10 @@ export type SubscriptionBillingPreview = {
     markedAt: Date | null;
   }>;
   totalCents: number;
+  // #5190 PR 3: age-up top-ups and credits confirming would raise. Part of the
+  // confirmation token only when non-empty, so a club not on "Age today" keeps
+  // a byte-identical token. `totalCents` stays the season entries' total.
+  ageUpAdjustments: SubscriptionBillingAgeUpAdjustment[];
   confirmationToken: string;
   // Subscription-category decoupling (review finding): more than one member
   // billed SOLO (no family group) under the SAME category this run. Solo

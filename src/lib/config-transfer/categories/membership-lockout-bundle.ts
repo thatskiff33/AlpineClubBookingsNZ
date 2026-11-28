@@ -1,5 +1,4 @@
 import {
-  isChoosableLiabilityAgeSource,
   isSubscriptionLiabilityAgeSource,
   isSubscriptionRequiredTypeAgeRule,
 } from "@/lib/policies/subscription";
@@ -18,18 +17,14 @@ export function reconcileMembershipLockoutBundle(
 }
 
 /**
- * `liabilityAgeSource`'s validator. `CURRENT_AGE` needs part-season invoices,
- * which have not shipped, so a bundle naming it fails the dry-run exactly as the
- * admin route refuses it. A validator owns the whole check, so the enum test is
- * here too.
+ * `liabilityAgeSource`'s validator: any age source, "Age today" included since
+ * part-season invoices shipped (#5190 PR 3), as the admin route accepts. A
+ * validator owns the whole check, so the enum test is here.
  */
 export function validateLiabilityAgeSource(value: unknown): string | null {
-  if (!isSubscriptionLiabilityAgeSource(value)) {
-    return `${JSON.stringify(value)} is not a valid SubscriptionLiabilityAgeSource`;
-  }
-  return value === "NOT_CHOSEN" || isChoosableLiabilityAgeSource(value)
+  return isSubscriptionLiabilityAgeSource(value)
     ? null
-    : `${value} cannot be chosen yet: it needs part-season invoices (#5190)`;
+    : `${JSON.stringify(value)} is not a valid SubscriptionLiabilityAgeSource`;
 }
 
 /** `mode` from a pre-#2543 bundle's `enabled` key (#2543/#2561); see the spec. */

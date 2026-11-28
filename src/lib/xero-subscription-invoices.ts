@@ -554,6 +554,9 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       },
       data: { status: "UNPAID", xeroInvoiceId: invoiceId, xeroInvoiceNumber: invoiceNumber },
     });
+    // #5190 PR 3: an age-up top-up's invoice is issued, so until it is paid it
+    // counts against the member's booking (`ISSUED_UNPAID_AGE_UP_TOP_UP`).
+    await tx.memberSubscriptionAgeUpAdjustment.updateMany({ where: { chargeId: charge.id, status: "PENDING", xeroInvoiceStatus: null }, data: { xeroInvoiceStatus: "UNPAID" } });
     if (downgraded.count < charge.coverage.length) {
       logger.warn(
         { chargeId: charge.id, invoiceId, updated: downgraded.count, covered: charge.coverage.length },

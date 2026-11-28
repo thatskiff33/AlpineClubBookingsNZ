@@ -1,5 +1,6 @@
 import type { EntranceFeeCategory } from "@prisma/client";
 import { readAdminGrantCreditNotePayload, XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, type AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
+import { AGE_UP_ADJUSTMENT_LOCAL_MODEL, readAgeUpCreditPayload, XERO_OUTBOX_AGE_UP_CREDIT_TYPE, type AgeUpCreditPayload } from "@/lib/age-up-credit-payload";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { readCardRefundReversalInvoicePayload, XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE, type QueuedCardRefundReversalInvoiceOutboxPayload } from "@/lib/xero-card-refund-reversal-outbox";
@@ -55,6 +56,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-148`)
   XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, // #4431
   XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE, // #5245: a school's corrected email and phone
+  XERO_OUTBOX_AGE_UP_CREDIT_TYPE, // #5190 PR 3: a mid-season age-up credit
 ] as const;
 
 interface QueuedEntranceFeeOutboxPayload {
@@ -216,6 +218,7 @@ export function subscriptionInvoiceOutboxRow(chargeId: string) {
 }
 
 export type QueuedOutboxPayload =
+  | AgeUpCreditPayload
   | OrganiserExtraAdjustmentPayload
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
@@ -249,6 +252,7 @@ export interface QueuedOutboxExpectedOperation {
     | "BookingModification"
     | "MemberSubscription"
     | "MembershipCancellationRequestParticipant"
+    | "MemberSubscriptionAgeUpAdjustment"
     | "GroupBookingSettlement"
     | "MembershipSubscriptionCharge"
     | "MemberCreditNoteAllocation"
@@ -315,6 +319,7 @@ export function readQueuedOutboxPayload(
 
   if (queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) return readOrganiserExtraAdjustmentPayload(value);
   if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return readAdminGrantCreditNotePayload(value);
+  if (queueType === XERO_OUTBOX_AGE_UP_CREDIT_TYPE) return readAgeUpCreditPayload(value);
   if (queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE) return readOrganisationContactDetailsPayload(value);
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
@@ -578,6 +583,7 @@ export function getQueuedOutboxExpectedOperation(
 
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return { entityType: "PAYMENT", operationType: "CREATE", localModels: ["PaymentTransaction"] };
   if (queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) return { entityType: "CREDIT_NOTE", operationType: "CREATE", localModels: ["MemberCredit"] };
+  if (queueType === XERO_OUTBOX_AGE_UP_CREDIT_TYPE) return { entityType: "CREDIT_NOTE", operationType: "CREATE", localModels: [AGE_UP_ADJUSTMENT_LOCAL_MODEL] };
   if (queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE) return { entityType: "CONTACT", operationType: "UPDATE", localModels: ["Organisation"] };
   if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE) {
     return {

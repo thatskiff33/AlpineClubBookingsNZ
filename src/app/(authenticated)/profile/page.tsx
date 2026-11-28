@@ -49,6 +49,7 @@ import {
 } from "@/lib/status-colors";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { requiresPaidSubscriptionForMemberForBooking } from "@/lib/membership-type-policy";
+import { ISSUED_UNPAID_AGE_UP_TOP_UP, seasonRowStatusOwed } from "@/lib/subscription-lockout-facts";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
@@ -218,7 +219,7 @@ export default async function ProfilePage({
       },
       subscriptions: {
         orderBy: { seasonYear: "desc" },
-        select: { status: true, seasonYear: true },
+        select: { status: true, seasonYear: true, ageUpAdjustments: ISSUED_UNPAID_AGE_UP_TOP_UP },
       },
     },
   });
@@ -236,16 +237,15 @@ export default async function ProfilePage({
   const { pendingDeletionRequest, pendingEmailChange } =
     await loadProfilePendingRequests({ memberId: member.id, isAdmin, club });
 
-  const currentSub = member.subscriptions.find(
-    (s) => s.seasonYear === currentSeasonYear,
-  );
+  // #5190 PR 3: an issued, unpaid age-up top-up is part of what they owe.
+  const currentSub = member.subscriptions.find((s) => s.seasonYear === currentSeasonYear);
   const subscriptionRequired =
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: member.id,
       seasonYear: currentSeasonYear,
     });
   const subscriptionStatus = subscriptionRequired
-    ? (currentSub?.status ?? null)
+    ? (currentSub ? seasonRowStatusOwed(currentSub) : null)
     : "NOT_REQUIRED";
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
@@ -522,8 +522,8 @@ export default async function ProfilePage({
                         </span>
                       )}
                     </span>
-                    <Badge className={subscriptionStatusClass(sub.status)}>
-                      {subscriptionStatusLabel(sub.status)}
+                    <Badge className={subscriptionStatusClass(seasonRowStatusOwed(sub))}>
+                      {subscriptionStatusLabel(seasonRowStatusOwed(sub))}
                     </Badge>
                   </div>
                 );

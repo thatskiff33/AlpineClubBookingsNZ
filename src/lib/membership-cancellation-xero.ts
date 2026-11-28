@@ -1,4 +1,4 @@
-import { Contact, CreditNote, type Contacts, type LineItem } from "xero-node";
+import { Contact, type Contacts, type CreditNote } from "xero-node";
 import { getManagedGroupUniverse } from "@/lib/xero-member-grouping";
 import { buildMembershipCancellationApprovalBlockedMessage } from "@/lib/membership-cancellation-blocker-messages";
 import { loadMembershipCancellationInvoiceBlockersByMemberId } from "@/lib/membership-cancellation-invoice-blockers";
@@ -11,7 +11,6 @@ import {
   type MembershipCancellationXeroContactGroupSetting,
 } from "@/lib/membership-cancellation-settings";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { xeroLineTax } from "@/lib/xero-tax-rendering";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { prisma } from "@/lib/prisma";
@@ -34,7 +33,11 @@ import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
 import logger from "@/lib/logger";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
-import { getResolvedAccountMapping } from "@/lib/xero-mappings";
+import {
+  allocateSubscriptionCreditNote,
+  buildSubscriptionCreditNote,
+  subscriptionCreditLineItem,
+} from "@/lib/subscription-credit-note";
 import { refreshXeroContactCachesFromContact } from "@/lib/xero-contact-cache";
 import { XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
@@ -729,29 +732,22 @@ export async function createXeroMembershipCancellationCreditNote(
     return existingCreditLink.xeroObjectId;
   }
 
-  const mapping = await getResolvedAccountMapping("membershipCancellationCredit");
-  const accountCode = mapping.code ?? "203";
   // #4632: the note returns money under the treatment its invoice was charged under.
   const taxRendering = await resolveXeroTaxRendering({
     kind: "subscription-invoice",
     invoiceId,
     subscriptionId: subscription.id,
   });
-  const creditLineItem: LineItem = {
+  const creditLineItem = await subscriptionCreditLineItem({
     // The club's own year-end names the season, resolved not defaulted because
     // this runs from the outbox worker (#3116). A credit note derives at send
     // time and is not persisted, so a retry spanning a deployment can render the
     // new wording where the first attempt used the old one - harmless, as the
     // note is matched by its claim row rather than by this text.
     description: `Membership cancellation credit for ${seasonYearsLabel(subscription.seasonYear, await refreshFinancialYearConfig())} annual subscription`,
-    quantity: 1,
-    unitAmount: amountCents / 100,
-    ...xeroLineTax(taxRendering),
-    accountCode,
-  };
-  if (mapping.itemCode) {
-    creditLineItem.itemCode = mapping.itemCode;
-  }
+    amountCents,
+    taxRendering,
+  });
 
   // The credit note's date decides its GST period and financial year, so it is
   // the club's calendar day. This file used to truncate the clock to its UTC day
@@ -759,14 +755,12 @@ export async function createXeroMembershipCancellationCreditNote(
   // for roughly the first half of every New Zealand day (INV-DATE-019, #2834).
   const cancellationCreditNoteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
-  const buildCreditNote = (): CreditNote => ({
-    type: CreditNote.TypeEnum.ACCRECCREDIT,
-    contact: { contactID: contactId },
+  const buildCreditNote = (): CreditNote => buildSubscriptionCreditNote({
+    contactId,
     date: cancellationCreditNoteDate,
-    lineAmountTypes: taxRendering.lineAmountTypes,
-    lineItems: [creditLineItem],
+    taxRendering,
+    lineItem: creditLineItem,
     reference: `Membership Cancellation ${params.participantId.slice(0, 8)}`,
-    status: CreditNote.StatusEnum.AUTHORISED,
   });
 
   const idempotencyKey = buildXeroIdempotencyKey(
@@ -986,30 +980,16 @@ async function allocateMembershipCancellationCreditNote(params: {
   const allocationDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.createCreditNoteAllocation(
-          tenantId,
-          params.creditNoteId,
-          {
-            allocations: [
-              {
-                invoice: { invoiceID: params.invoiceId },
-                amount: params.amountCents / 100,
-                date: allocationDate,
-              },
-            ],
-          },
-          undefined,
-          idempotencyKey,
-        ),
-      {
-        operation: "createCreditNoteAllocation",
-        resourceType: "ALLOCATION",
-        workflow: "allocateMembershipCancellationCreditNote",
-        context: `createCreditNoteAllocation(${params.creditNoteId} -> ${params.invoiceId})`,
-      },
-    );
+    const response = await allocateSubscriptionCreditNote({
+      xero,
+      tenantId,
+      creditNoteId: params.creditNoteId,
+      invoiceId: params.invoiceId,
+      amountCents: params.amountCents,
+      date: allocationDate,
+      idempotencyKey,
+      workflow: "allocateMembershipCancellationCreditNote",
+    });
 
     const allocationUrl = buildXeroInvoiceUrl(params.invoiceId);
     await completeXeroSyncOperation(operation, {

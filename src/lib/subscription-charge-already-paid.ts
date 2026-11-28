@@ -226,9 +226,23 @@ export const CLOSED_FAMILY_PARTLY_REVERSED_CODE = "CLOSED_FAMILY_PARTLY_REVERSED
  */
 export const CLOSED_FAMILY_REBILL_BESIDE_INVOICE_CODE = "CLOSED_FAMILY_REBILL_BESIDE_INVOICE";
 
+/**
+ * #5190 PR 3: the preview's warning that a member's mid-season age-up under
+ * "Age today" cannot be settled by this app (their season charge is shared,
+ * not this app's, or a voided top-up), so the officer settles it in Xero
+ * (`subscription-age-up-billing.ts`). A warning because confirming still
+ * invoices everything else, and nothing is left OPEN that no officer can close:
+ * the preview shows it for as long as it holds. Only a whole-club run raises it.
+ */
+export const AGE_UP_SETTLE_IN_XERO_CODE = "AGE_UP_SETTLE_IN_XERO";
+
 /** True for a preview exception that warns about a charge confirming still invoices. */
 export function isInvoicingPreviewWarning(code: string): boolean {
-  return code === CLOSED_FAMILY_PARTLY_REVERSED_CODE || code === CLOSED_FAMILY_REBILL_BESIDE_INVOICE_CODE;
+  return (
+    code === CLOSED_FAMILY_PARTLY_REVERSED_CODE ||
+    code === CLOSED_FAMILY_REBILL_BESIDE_INVOICE_CODE ||
+    code === AGE_UP_SETTLE_IN_XERO_CODE
+  );
 }
 
 /**

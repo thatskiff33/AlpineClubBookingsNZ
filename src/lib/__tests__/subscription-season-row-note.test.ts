@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { requireCalendarDate } from "@/lib/club-time";
 
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 import {
@@ -47,6 +48,7 @@ function note(opts: {
     },
     seasonRow: opts.seasonRow === undefined ? untouched : opts.seasonRow,
     seasonYear: 2026,
+    today: requireCalendarDate("2026-07-01"),
     ageTierSettings,
     liabilitySettings: opts.liabilitySettings ?? NOT_CHOSEN_LIABILITY_SETTINGS,
   });
@@ -144,6 +146,7 @@ describe("hasNotRequiredRowBillingNote", () => {
         member: { dateOfBirth: null, ageTier: "CHILD", active: true, archivedAt: null },
         seasonRow: untouched,
         seasonYear: 2026,
+        today: requireCalendarDate("2026-07-01"),
         ageTierSettings,
         liabilitySettings: NOT_CHOSEN_LIABILITY_SETTINGS,
       }),

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { clubToday } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { prisma } from "@/lib/prisma";
@@ -35,10 +36,12 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const seasonYear = clubSeasonYear(await clubTimeZone());
+  const zone = await clubTimeZone();
+  const seasonYear = clubSeasonYear(zone);
   const impact = await buildSubscriptionLiabilityImpact(prisma, {
     seasonYear,
     proposed: parsed.data,
+    today: clubToday(zone),
   });
   const invoiceNumbersShown = hasAdminAreaAccess(guard.session.user, {
     area: "finance",

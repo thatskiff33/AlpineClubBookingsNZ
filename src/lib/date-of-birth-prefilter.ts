@@ -107,9 +107,9 @@ import {
  * either way — which is what makes it safe to land beside the migration rather
  * than after it.
  *
- * @param seasonStart the first day of the season year, as
- *   `getSeasonStartCalendarDate` builds it: a club calendar day, with no zone
- *   and no instant to read it in.
+ * @param seasonStart the day the age is read on, a club calendar day with no
+ *   zone and no instant: the season's first day as `getSeasonStartCalendarDate`
+ *   builds it, or any day in the season under "Age today" (#5190 PR 3).
  * @param minAge the configured minimum age of the tier being selected for.
  */
 export function dateOfBirthPrefilterBoundForMinAge(
@@ -132,9 +132,9 @@ export function dateOfBirthPrefilterBoundForMinAge(
   }
 
   // Whole years back, spelled as months so the step is the kernel's clamping
-  // one: a season start is always day 1 of a month, so the clamp is unreachable
-  // from `getSeasonStartCalendarDate` — but a 29 February argument must land on
-  // 28 February rather than throw or roll into March.
+  // one: a season start is always day 1 of a month, so only an "Age today"
+  // reference (#5190 PR 3) reaches the clamp — a 29 February argument must
+  // land on 28 February rather than throw or roll into March.
   const cutoffDay = addCalendarMonths(seasonStart, -12 * minAge);
 
   return dateOnlyInstantOf(addCalendarDays(cutoffDay, 1));

@@ -1,0 +1,1 @@
+- Clubs can choose **Their age today** for subscriptions. The annual billing preview shows birthday top-ups and credits; members who start owing can still book until their invoice is issued.

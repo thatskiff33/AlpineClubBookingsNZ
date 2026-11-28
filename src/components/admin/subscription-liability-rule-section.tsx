@@ -31,7 +31,6 @@ import {
 } from "@/lib/api-error-message";
 import {
   hasChosenLiabilityRule,
-  isChoosableLiabilityAgeSource,
   LIABILITY_RULE_CHOICE_PERMISSIONS,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
@@ -89,9 +88,9 @@ const REQUIRED_TYPE_AGE_RULE_OPTIONS: ReadonlyArray<{
 ];
 
 /**
- * Every age source, in the order offered. "Age today" is listed but cannot be
- * chosen until part-season invoices exist (#5190's third pull request);
- * `isChoosableLiabilityAgeSource` decides, so this list needs no edit then.
+ * Every age source, in the order offered, each open for choice. "Age today"
+ * opened with part-season invoices, top-ups and credits (#5190 PR 3; owner
+ * decisions 20 and 27 Nov 2026); its text states all three and the grace.
  */
 const AGE_SOURCE_OPTIONS: ReadonlyArray<{
   value: ShownAgeSource;
@@ -114,7 +113,7 @@ const AGE_SOURCE_OPTIONS: ReadonlyArray<{
     value: "CURRENT_AGE",
     label: "Their age today",
     description:
-      "Not available yet: it needs part-season invoices for a member who moves up an age group during the season.",
+      "A member who moves to another age group during the season settles the difference for the whole months left, their birthday month included: a part-season invoice if they start to owe, a top-up if the new age group costs more, or a credit if it costs less or nothing. They can keep booking until that invoice or top-up is issued; from then it must be paid before they book. A credit never stops anyone booking.",
   },
 ];
 
@@ -509,30 +508,26 @@ function RuleQuestions({
           A member with no date of birth on file keeps the age group stored on
           their record.
         </p>
-        {AGE_SOURCE_OPTIONS.map((option) => {
-          const choosable = isChoosableLiabilityAgeSource(option.value);
-          return (
-            <label
-              key={option.value}
-              htmlFor={`subscription-liability-age-${option.value}`}
-              className="flex items-start gap-3"
-            >
-              <Radio
-                id={`subscription-liability-age-${option.value}`}
-                className="mt-0.5"
-                name="subscription-liability-age-source"
-                value={option.value}
-                checked={draft.liabilityAgeSource === option.value}
-                disabled={!choosable}
-                onChange={() => onChange({ liabilityAgeSource: option.value })}
-              />
-              <span className={`text-sm ${choosable ? "" : "text-muted-foreground"}`}>
-                <span className="font-medium">{option.label}</span>
-                <span className="block text-muted-foreground">{option.description}</span>
-              </span>
-            </label>
-          );
-        })}
+        {AGE_SOURCE_OPTIONS.map((option) => (
+          <label
+            key={option.value}
+            htmlFor={`subscription-liability-age-${option.value}`}
+            className="flex items-start gap-3"
+          >
+            <Radio
+              id={`subscription-liability-age-${option.value}`}
+              className="mt-0.5"
+              name="subscription-liability-age-source"
+              value={option.value}
+              checked={draft.liabilityAgeSource === option.value}
+              onChange={() => onChange({ liabilityAgeSource: option.value })}
+            />
+            <span className="text-sm">
+              <span className="font-medium">{option.label}</span>
+              <span className="block text-muted-foreground">{option.description}</span>
+            </span>
+          </label>
+        ))}
       </fieldset>
 
       <p className="text-xs text-muted-foreground">

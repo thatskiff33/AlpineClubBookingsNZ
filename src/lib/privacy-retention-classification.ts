@@ -27,6 +27,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MembershipSubscriptionCharge: "personal",
   MembershipSubscriptionChargeComponent: "personal",
   MembershipSubscriptionChargeCoverage: "personal",
+  MemberSubscriptionAgeUpAdjustment: "personal",
   FamilyGroupSeasonInvoiceMarker: "personal",
   MembershipBillingException: "personal",
   MembershipSubscriptionBillingSettings: "personal",

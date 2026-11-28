@@ -9,6 +9,7 @@ import {
   resolveMembershipTypePolicyForMember,
 } from "@/lib/membership-type-policy";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
+import { ISSUED_UNPAID_AGE_UP_TOP_UP, seasonRowStatusOwed } from "@/lib/subscription-lockout-facts";
 import { formatUnpaidSubscriptionRateReason } from "@/lib/policies/subscription-lockout-pricing";
 import { servingMcpConnection } from "@/lib/mcp-connection-request";
 import { projectForConnection } from "@/lib/connection-projection";
@@ -32,6 +33,8 @@ export async function GET() {
     xeroInvoiceId: true,
     xeroInvoiceNumber: true,
     xeroOnlineInvoiceUrl: true,
+    // #5190 PR 3: an issued, unpaid age-up top-up is part of what they owe.
+    ageUpAdjustments: ISSUED_UNPAID_AGE_UP_TOP_UP,
   } as const;
 
   const member = await prisma.member.findUnique({
@@ -60,7 +63,11 @@ export async function GET() {
     seasonYear,
   });
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
-  const status = sub?.status ?? "NOT_INVOICED";
+  const rawStatus = sub?.status ?? "NOT_INVOICED";
+  const status = sub ? seasonRowStatusOwed(sub) : "NOT_INVOICED";
+  // The season invoice is paid; what is owed is the top-up's own emailed
+  // invoice, so the season invoice's link is not offered as the one to pay.
+  const offerSeasonInvoice = subscriptionRequired && status === rawStatus;
   const effectiveStatus = subscriptionRequired ? status : "NOT_REQUIRED";
   // "Told them why" (#2533). When the booking lockout applies to this member and
   // their subscription is not paid, surface a plain-English sentence the booking
@@ -93,12 +100,12 @@ export async function GET() {
 
   const body: Record<string, unknown> = {
     status: effectiveStatus,
-    rawStatus: status,
+    rawStatus,
     subscriptionRequired,
     effectiveStatusReason,
     seasonDisplay,
-    invoiceUrl: subscriptionRequired ? sub?.xeroOnlineInvoiceUrl ?? null : null,
-    invoiceNumber: subscriptionRequired ? sub?.xeroInvoiceNumber ?? null : null,
+    invoiceUrl: offerSeasonInvoice ? sub?.xeroOnlineInvoiceUrl ?? null : null,
+    invoiceNumber: offerSeasonInvoice ? sub?.xeroInvoiceNumber ?? null : null,
     rawInvoiceUrl: sub?.xeroOnlineInvoiceUrl ?? null,
     rawInvoiceNumber: sub?.xeroInvoiceNumber ?? null,
     membershipTypeKey: membershipTypePolicy?.membershipType.key ?? null,

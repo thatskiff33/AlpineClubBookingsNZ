@@ -6,6 +6,7 @@ import type {
   Role,
   SubscriptionStatus,
 } from "@prisma/client";
+import type { CalendarDate } from "@/lib/club-time";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 import {
   ADMIN_LIST_LIABILITY_SIDE,
@@ -529,6 +530,8 @@ export function isSubscriptionNotRequiredForMembershipType(params: {
   member: { ageTier: AgeTier; dateOfBirth: Date | null };
   seasonRowStatus: SubscriptionStatus | null | undefined;
   seasonYear: number;
+  /** The club's today: the day "Age today" reads the member's age on. */
+  today: CalendarDate;
   ageTierSettings: AgeTierSettingData[];
   liabilitySettings: SubscriptionLiabilitySettings;
 }): boolean {
@@ -537,6 +540,7 @@ export function isSubscriptionNotRequiredForMembershipType(params: {
     member: params.member,
     seasonRowStatus: params.seasonRowStatus,
     seasonYear: params.seasonYear,
+    asOf: params.today,
     rule: liabilityRuleFor(ADMIN_LIST_LIABILITY_SIDE, params.liabilitySettings),
     ageTierSettings: params.ageTierSettings,
   }).owes;
