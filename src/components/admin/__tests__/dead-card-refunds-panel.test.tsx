@@ -884,6 +884,13 @@ describe("#4851: a dead refund out of the group organiser's card", () => {
     expect(screen.queryByRole("button", { name: /nothing left owed/i })).not.toBeInTheDocument();
   });
 
+  // #5267 review: owing nothing, the close only finishes the joiners' card records, so no bank note is promised or refused.
+  it("MUTATION: the old whole-group row that owes nothing promises no Xero bank note and asks for nothing by hand", () => {
+    openDialog(row({ settleKind: "legacy-group", owedCents: 0, wholeAmountOnly: true, xeroRefundNote: "none", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).not.toHaveTextContent(/Xero refund credit note|by hand if it needs one/);
+  });
+
   it("finance view-only leaves the organiser's buttons disabled", () => {
     mocks.canEdit = false;
     render(

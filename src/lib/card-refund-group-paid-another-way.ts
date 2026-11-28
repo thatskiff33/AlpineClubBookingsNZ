@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 import type Stripe from "stripe";
 
+import { groupXeroQueuedMessage } from "@/components/admin/dead-card-refunds-xero-copy";
 import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -74,6 +75,7 @@ import { prisma } from "@/lib/prisma";
 import { listRefundsForPaymentIntent } from "@/lib/stripe";
 import { formatCents } from "@/lib/utils";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
+import { describeRefundMethod } from "@/lib/xero-refund-method";
 
 /**
  * #4851 (owner decision, 10 Nov 2026): PAID ANOTHER WAY FOR A DEAD REFUND OUT OF
@@ -312,20 +314,6 @@ async function perJoinerSettlement(paymentId: string, bookingId: string): Promis
 
 type Locked = Awaited<ReturnType<typeof lockDeadCardRefundRow>>;
 
-/**
- * #5267: what a bank close's audit summary says it queued in Xero. A joiner
- * with no note may have no invoice, or its note may have been refused at the
- * queue, so the summary says no note was queued, never why.
- */
-function bankCloseXeroSentence(kind: "organiser-child" | "legacy-group", queued: GroupCardRefundXeroQueued): string {
-  const whose = kind === "organiser-child" ? "the joiner's invoice" : "each joiner's invoice";
-  if (queued === "refund-note") return `A Xero refund credit note worded as a bank transfer is queued on ${whose}.`;
-  if (queued === "some-refund-notes") {
-    return "A Xero refund credit note worded as a bank transfer is queued on some joiners' invoices; none was queued for the others, so check their refunds are recorded in Xero.";
-  }
-  return "No Xero refund credit note was queued: check the refund is recorded in Xero.";
-}
-
 /** The audit row's summary for each outcome of the close. */
 function closeSummary(kind: "organiser-child" | "legacy-group", body: Pick<CloseBody, "outcome" | "xeroQueued">): string {
   const what = kind === "organiser-child"
@@ -335,10 +323,10 @@ function closeSummary(kind: "organiser-child" | "legacy-group", body: Pick<Close
     case "recorded-stripe":
       return `${what} closed: Stripe already had the refund, so it was recorded and nobody was paid again.`;
     case "bank":
-      // A reversal's words are the ordinary close's own (`INV-PAY-151`).
+      // A reversal's words are the ordinary close's own (`INV-PAY-151`); the rest are the dialog's (`INV-SSOT`).
       return body.xeroQueued === "stripe-reversal-and-bank-note"
         ? `${what} closed as paid by bank transfer${paidAnotherWayXeroAuditFollowUp(body.xeroQueued)}`
-        : `${what} closed as paid by bank transfer. ${bankCloseXeroSentence(kind, body.xeroQueued)}`;
+        : `${what} closed as paid by bank transfer. ${groupXeroQueuedMessage(body.xeroQueued, describeRefundMethod("internet-banking"))}`;
     case "mirrors":
       return `${what} closed: the group's payment was already refunded, so only the joiners' refund records were finished.`;
     case "closed":

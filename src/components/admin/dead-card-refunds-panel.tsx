@@ -430,12 +430,15 @@ export function DeadCardRefundsPanel({
               <p className="text-muted-foreground">
                 Settle it here, not with a new refund in the Stripe dashboard.
               </p>
-              {/* #5267: a group row's joiners are credited in Xero as any close's member is. */}
-              <p className="text-muted-foreground">
-                {target
-                  ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording, formatCents(target.cardNoteCoversCents, format))
-                  : null}
-              </p>
+              {/* #5267: a group row's joiners are credited in Xero as any close's member is. A group row
+                  that owes nothing pays nobody by bank, so it promises no bank note. */}
+              {target && isGroupCardRefund(target) && target.owedCents === 0 ? null : (
+                <p className="text-muted-foreground">
+                  {target
+                    ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording, formatCents(target.cardNoteCoversCents, format))
+                    : null}
+                </p>
+              )}
               <p className="font-medium text-foreground">
                 {target ? `${formatCents(target.owedCents, format)} is still owed.` : null}
               </p>
