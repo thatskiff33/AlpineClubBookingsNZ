@@ -282,10 +282,12 @@ export const PAID_CONFIRMATION_NOTICE_DELIVERERS: readonly OwedNoticeDeliverer<P
 
 /**
  * A confirmation that could not be recorded as owed (a booking id that cannot
- * key a marker; unreachable with today's ids): sent once as before #5433,
- * unkeyed, with nothing left for a later run and no officers' alert. Used by
- * the confirm-pending job's zero-balance claim (#5433 PR 4, round 1, item 5).
- * Never throws.
+ * key a marker; unreachable with today's ids): sent once, unkeyed, with nothing
+ * left for a later run and no officers' alert. Reached only through the shared
+ * after-commit sequence (`queueInvoiceAndDeliverPaidConfirmation`), by every
+ * door that owes the confirmation. For the webhook, the confirm-payment route
+ * and the confirm-pending job it is what those doors sent before #5433; for the
+ * three recovery doors, which sent nothing before, it is new. Never throws.
  */
 export async function sendUnrecordedPaidBookingConfirmation(bookingId: string, format: ClubFormat, job: string): Promise<void> {
   try {

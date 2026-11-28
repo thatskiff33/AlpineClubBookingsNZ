@@ -531,8 +531,16 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
   ];
   /** The zero-balance claim's hand-over: the marker it wrote, or null, for a fresh PAID it always owed. */
   const ZERO_BALANCE_HAND_OVER = 'queueInvoiceAndDeliverPaidConfirmation({ outcome: "paid", paidConfirmation: resolution.paidConfirmation }';
-  /** The rule the per-door test applies, on a file's code with comments stripped: the reasons it breaks, or none. */
-  function cardDoorBreaks(code: string): string[] {
+  /** The one door file that also hands the sequence a zero-balance claim's marker. */
+  const ZERO_BALANCE_DOOR = "src/lib/cron-confirm-pending.ts";
+  /**
+   * The rule the per-door test applies, on a file's code with comments
+   * stripped: the reasons it breaks, or none. It reads text from the settle
+   * onwards, so it does not see a send moved into a helper defined above the
+   * settle and called after it, or one behind an imported wrapper of another
+   * name; the scan above covers the files in its scope for that.
+   */
+  function cardDoorBreaks(code: string, zeroBalanceDoor = false): string[] {
     const breaks: string[] = [];
     const settles = [...code.matchAll(/(?:const |let )?(\w+) = await markBookingPaymentSucceeded\(/g)];
     if (settles.length !== 1) return [`expected one settle assigned to a variable, found ${settles.length}`];
@@ -544,8 +552,8 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
     const handOver = `queueInvoiceAndDeliverPaidConfirmation(${settled},`;
     if (count(handOver) !== 1) breaks.push(`not exactly one ${handOver}`);
     if (code.indexOf(handOver) < settleAt) breaks.push("the sequence runs before the settle");
-    // Every other call of the sequence is the zero-balance claim's (the confirm-pending job only).
-    if (count("queueInvoiceAndDeliverPaidConfirmation(") !== count(handOver) + count(ZERO_BALANCE_HAND_OVER)) {
+    // Every other call of the sequence is the zero-balance claim's, in the confirm-pending job only.
+    if (count("queueInvoiceAndDeliverPaidConfirmation(") !== count(handOver) + (zeroBalanceDoor ? count(ZERO_BALANCE_HAND_OVER) : 0)) {
       breaks.push("the sequence is handed something other than the settle's result");
     }
     const after = code.slice(settleAt);
@@ -556,7 +564,7 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
   }
 
   it.each(CARD_DOORS)("%s owes the paid confirmation in the settle and delivers it through its owed notice", (rel) => {
-    expect(cardDoorBreaks(stripComments(readRepoFile(rel) ?? ""))).toEqual([]);
+    expect(cardDoorBreaks(stripComments(readRepoFile(rel) ?? ""), rel === ZERO_BALANCE_DOOR)).toEqual([]);
   });
 
   // Fix round 1, item 1: the zero-balance confirmation goes through the same
@@ -575,6 +583,13 @@ describe("#5433: every notice sent after a commit is owed, or has a recorded rea
     expect(cardDoorBreaks(door.replace("(reconciliation,", "(other,"))).toContain("not exactly one queueInvoiceAndDeliverPaidConfirmation(reconciliation,");
     expect(cardDoorBreaks(door.replace("owesPaidConfirmation: true", "x: 1"))).toContain("not exactly one owesPaidConfirmation: true");
     expect(cardDoorBreaks(`${door}\nawait queueInvoiceAndDeliverPaidConfirmation({ outcome: "paid" }, {});`)).toContain("the sequence is handed something other than the settle's result");
+    // The zero-balance hand-over is allowed in the confirm-pending job and nowhere else.
+    const withZeroBalance = `${door}\nawait ${ZERO_BALANCE_HAND_OVER}, {});`;
+    expect(cardDoorBreaks(withZeroBalance, true)).toEqual([]);
+    expect(cardDoorBreaks(withZeroBalance)).toContain("the sequence is handed something other than the settle's result");
+    const [settleLine, handOverLine] = door.split("\n") as [string, string];
+    expect(cardDoorBreaks(`${handOverLine}\n${settleLine}`)).toContain("the sequence runs before the settle");
+    expect(cardDoorBreaks(`${door}\nawait markBookingPaymentSucceeded({});`)).toContain("more than one settle call");
   });
 
   // The mutation probes, kept: each edit the census must catch, applied to a copy.
