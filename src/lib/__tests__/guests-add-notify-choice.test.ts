@@ -472,6 +472,13 @@ describe("POST /api/bookings/[id]/guests is not held up by an old open edit revi
     reviewContext: null,
   };
 
+  // `vi.clearAllMocks()` keeps implementations: take the OPEN row off the plain
+  // client so the suites below do not run against it.
+  afterEach(async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([] as never);
+  });
+
   it("adds the guest, saves the new total and emails the member", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);

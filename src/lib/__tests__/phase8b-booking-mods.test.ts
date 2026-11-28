@@ -663,6 +663,13 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
 /** An edit review raised before #4317 that is still OPEN (#4344 wave C2 cases). */
 const OPEN_REVIEW = { id: "task-open", bookingId: "bk1", occurrenceKey: "occ-1", amountCents: null, raisedAmountCents: null, reviewContext: null };
 
+// `vi.clearAllMocks()` keeps implementations, so the OPEN row those cases put
+// on the plain client is taken off here, pass or fail, before the next case.
+afterEach(async () => {
+  const { prisma } = await import("@/lib/prisma");
+  vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([] as never);
+});
+
 describe("completeHostingGuestRows (#2675)", () => {
   it("carries the guest's own age tier onto the Member row it synthesises", () => {
     const rows = completeHostingGuestRows(
@@ -1304,7 +1311,6 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
       expect(tx.booking.update).toHaveBeenCalled();
       expect(sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
       expect(vi.mocked(sendBookingModifiedEmail).mock.calls[0]![0]).not.toHaveProperty("financialReviewPending");
-      vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([] as never);
     }
   });
 
@@ -2219,7 +2225,6 @@ describe("POST /api/bookings/[id]/guests", () => {
       expect(tx.bookingGuest.create).toHaveBeenCalled();
       expect(sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
       expect(vi.mocked(sendBookingModifiedEmail).mock.calls[0]![0]).not.toHaveProperty("financialReviewPending");
-      vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([] as never);
     }
   });
 });
@@ -3397,8 +3402,6 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 0,
-      // #3032: required, and this suite is not about the review note.
-      // False is the control state for every assertion here.
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -3428,8 +3431,6 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 5000,
-      // #3032: required, and this suite is not about the review note.
-      // False is the control state for every assertion here.
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -3458,8 +3459,6 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 5000,
       additionalAmountCents: 0,
-      // #3032: required, and this suite is not about the review note.
-      // False is the control state for every assertion here.
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -3487,8 +3486,6 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 5000,
       refundAmountCents: 0,
       additionalAmountCents: 5000,
-      // #3032: required, and this suite is not about the review note.
-      // False is the control state for every assertion here.
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -3519,8 +3516,6 @@ describe("bookingModifiedTemplate", () => {
       additionalPaymentMethod: "INTERNET_BANKING",
       paymentReference: "BOOKING-IB-1",
       xeroInvoiceNumber: "INV-1001",
-      // #3032: required, and this suite is not about the review note.
-      // False is the control state for every assertion here.
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -3550,8 +3545,6 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 0,
-      // #3032: required, and this suite is not about the review note.
-      // False is the control state for every assertion here.
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,

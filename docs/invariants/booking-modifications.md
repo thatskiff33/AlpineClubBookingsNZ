@@ -1301,9 +1301,11 @@ a review.
 
 **The pending-review fence is retired** (#4344 wave C2). It refused a
 money-affecting edit while an `EDIT_FINANCIAL_REVIEW` task on the booking was
-OPEN; #4343's clean-up left none, so no edit is refused on that ground. A
-consent removal made while one was open already credited the guest, so the
-cleanup dismisses that review and moves no more money; an officer is warned.
+OPEN, and no edit is refused on that ground now. That rests on none being
+OPEN: #4343's clean-up settles them, and the owner confirms the census reads
+zero before this release serves (its deploy step). A consent removal made while
+one was open already credited the guest, so the cleanup dismisses that review
+and moves no more money.
 
 ## INV-MOD-042
 
@@ -1538,8 +1540,8 @@ and the acceptance re-price in `guest-acceptance-reprice-settlement.test.ts`.
 Against a real server, `edit-auto-pricing-doors.realdb.test.ts` drives the
 removal, date, batch and in-progress doors and the ledger reversal.
 
-The legacy fence and queue stay pinned by `edit-financial-review.test.ts` and
-`edit-financial-review-races.realdb.test.ts`, and the waitlist offer sweep's
+The legacy OPEN-review lookup and queue stay pinned by
+`edit-financial-review.test.ts` and `edit-financial-review-races.realdb.test.ts`, and the waitlist offer sweep's
 refusal to reprice over a blank by `waitlist.test.ts`.
 
 ## INV-MOD-053

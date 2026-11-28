@@ -947,14 +947,6 @@ const GENERATED_CASES: EmailRenderCase[] = [
     bookingModifiedTemplate({ addedGuests: [], firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, additionalAmountCents: 113, appliedCreditGivenBackCents: 0, unpaidAskCancelled: false, refundByBankTransfer: null, refundDestination: "own" }, CLUB_FORMAT_TEST) },
   { id: "bookingModifiedTemplate:full", fn: "bookingModifiedTemplate", render: () =>
     bookingModifiedTemplate({ addedGuests: [], firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, accountCreditAmountCents: 113, additionalAmountCents: 114, additionalPaymentMethod: "INTERNET_BANKING", paymentReference: "paymentReference-15", xeroInvoiceNumber: "xeroInvoiceNumber-16", promoCoverageNote: "promoCoverageNote-17", appliedCreditGivenBackCents: 0, unpaidAskCancelled: false, refundByBankTransfer: null, refundDestination: "own" }, CLUB_FORMAT_TEST) },
-  /*
-    #3032: the review note is a rendered shape of its own, so it gets its own
-    pin rather than riding on `:full`. Deliberately COMPOSED - review pending
-    AND a positive internet-banking amount with its invoice and reference -
-    because that is the combination #3033's review found the email getting
-    wrong, and the one a member pays for if it silently regresses. `:minimal`
-    and `:full` keep `false`, so their pins are byte-identical to before.
-  */
   // #3827 (D-3813-6): an internet-banking refund is promised, not reported.
   { id: "bookingModifiedTemplate:refundByBankTransfer", fn: "bookingModifiedTemplate", render: () =>
     bookingModifiedTemplate({ addedGuests: [], firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, additionalAmountCents: 0, appliedCreditGivenBackCents: 0, unpaidAskCancelled: false, refundByBankTransfer: "member", refundDestination: "own" }, CLUB_FORMAT_TEST) },

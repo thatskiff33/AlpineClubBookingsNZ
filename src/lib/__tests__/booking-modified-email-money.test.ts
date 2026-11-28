@@ -83,6 +83,26 @@ describe("the settlement note", () => {
       /An additional payment of \$45\.00 is required/,
     );
   });
+
+  it("carries the invoice and reference an internet-banking payment needs", async () => {
+    // The invoice number and the reference are how the member pays: without
+    // them a bank transfer cannot be matched to the booking.
+    const overrides = {
+      additionalAmountCents: 4500,
+      additionalPaymentMethod: "INTERNET_BANKING",
+      xeroInvoiceNumber: "INV-0042",
+      paymentReference: "TAC-1234",
+    };
+    const note = await paymentNoteFromSender(overrides);
+    expect(note).toMatch(/An additional Internet Banking payment of \$45\.00 is required/);
+    expect(note).toContain("Xero invoice INV-0042");
+    expect(note).toContain("Payment reference: TAC-1234.");
+
+    // The flat body and the HTML are built by separate code.
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    expect(html).toContain("INV-0042");
+    expect(html).toContain("TAC-1234");
+  });
 });
 
 describe("an internet-banking refund is promised, not reported (#3827, D-3813-6)", () => {

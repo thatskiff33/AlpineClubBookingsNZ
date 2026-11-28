@@ -11,7 +11,6 @@ import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
 import type { BookingDetailHistory } from "../_lib/booking-detail-history";
 import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
 import { BookingMoneyReconciliationNotice } from "./booking-money-reconciliation-notice";
-import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 
 // States with a self-contained outcome worth surfacing as a banner. Active
 // states (payable / under_review) already have their own dedicated UI below.
@@ -69,8 +68,9 @@ export function BookingStatusBanners({
   } = party;
   const { showCompletePaymentCard } = payment;
   const { bookingNarrative } = history;
+  // Only a PAID or COMPLETED booking reaches the `paid` narrative, so the
+  // wording a viewer without the owner's money view gets is always "confirmed".
   const neutralFinancialNarrative = !viewer.canSeeOwnerCredit && bookingNarrative.state === "paid";
-  const stayConfirmed = isPaidLikeBookingStatus(booking.status) || booking.status === "CONFIRMED";
   const { paymentRequiredDescription } = messages;
   return (
     <>
@@ -116,8 +116,8 @@ export function BookingStatusBanners({
             "border-border bg-muted text-foreground"
           }`}
         >
-          <p className="font-medium">{neutralFinancialNarrative ? stayConfirmed ? "Booking confirmed" : "Booking awaiting confirmation" : bookingNarrative.headline}</p>
-          <p>{neutralFinancialNarrative ? stayConfirmed ? "This stay is confirmed." : "This booking is awaiting confirmation." : bookingNarrative.message}</p>
+          <p className="font-medium">{neutralFinancialNarrative ? "Booking confirmed" : bookingNarrative.headline}</p>
+          <p>{neutralFinancialNarrative ? "This stay is confirmed." : bookingNarrative.message}</p>
           {!neutralFinancialNarrative ? <p>{bookingNarrative.nextStep}</p> : null}
         </div>
       ) : null}

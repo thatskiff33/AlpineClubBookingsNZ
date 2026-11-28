@@ -3101,8 +3101,9 @@ _Legacy: settles tasks raised before #4317._
 
 - **No edit is gated on an open review** (#4344 wave C2). #3032's
   pending-review fence refused a money-affecting edit while a review on the
-  booking was OPEN, at all four money-affecting doors. #4343's clean-up left no
-  OPEN review, and wave C2 removed the fence and its 409.
+  booking was OPEN, at all four money-affecting doors. Wave C2 removed the fence
+  and its 409. That rests on no review being OPEN: #4343's clean-up settles
+  them, and the owner confirms its census reads zero before the release serves.
 - **Three database constraints, because prose is not enforcement** (migration
   `20260903010000`). An `EDIT_FINANCIAL_REVIEW` row must carry its
   `occurrenceKey` (`ManualRefundTask_edit_review_occurrence_key_present`) —

@@ -3062,14 +3062,15 @@ There are FOUR creators, and only the first, second and fourth ever make an OPEN
 **An OPEN review no longer refuses an edit** (#4344 wave C2). #3032's
 pending-review fence refused a money-affecting edit while a review on the
 booking was OPEN, with a `409` coded `EDIT_FINANCIAL_REVIEW_PENDING`; a
-consent-authority removal (owner decision D-14) was exempt. #4343's clean-up
-left no OPEN review, and wave C2 removed the fence and its pending-review
-banner, list label, pay-link note and email note. A consent removal that came
+consent-authority removal (owner decision D-14) was exempt. Wave C2 removed the
+fence and its pending-review banner, list label, pay-link note and email note.
+That rests on no review being OPEN: #4343's clean-up settles them, and the
+owner confirms its census reads zero before this release serves. A consent removal that came
 off while a review was open already credited the guest, so
 `bookings:edit-review-cleanup` dismisses the review that guest was on instead of
 settling it, and its own completion is refused under the same lock if a removal
-lands mid-run. An officer settling it by hand is warned, not refused (owner,
-24 Oct 2026).
+lands mid-run. An officer cannot close one by hand: the task route refuses an
+edit review (wave C1).
 
 The transition is a status-fenced conditional update, so a double click can
 never double-apply the allocation, and the row is never processed by any cron —

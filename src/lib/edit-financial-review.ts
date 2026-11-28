@@ -408,8 +408,8 @@ export const OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER = {
  *
  * Scoped by BOOKING and not by payment, deliberately: a credit-only task carries
  * no `paymentId`, so a payment-scoped lookup would miss it. Since #4344 wave C2
- * nothing refuses an edit on this answer; it remains for the review's own
- * settlement and recovery code.
+ * nothing refuses an edit on this answer and no production code calls it; it
+ * stays, with its tests, until wave C3 retires the review's own machinery.
  */
 export async function findOpenEditFinancialReviewTask(
   bookingId: string,

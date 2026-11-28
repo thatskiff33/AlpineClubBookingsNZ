@@ -269,6 +269,26 @@ describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
     expect(h.clampAppliedCreditToBookingPrice).not.toHaveBeenCalled();
   });
 
+  it("re-prices while an old edit review is still open (#4344 wave C2)", async () => {
+    // The retired pending-review fence left the price alone while an OPEN
+    // `EDIT_FINANCIAL_REVIEW` row sat on the booking. One is on file here, on
+    // both reads a fence put back would use.
+    const openReview = { id: "task-open", bookingId: "booking-1", occurrenceKey: "occ-1", amountCents: null, raisedAmountCents: null, reviewContext: null };
+    const client = tx(booking());
+    Object.assign(client.manualRefundTask, {
+      findFirst: vi.fn(async () => openReview),
+      findMany: vi.fn(async () => [openReview]),
+    });
+    const result = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
+    });
+    expect(result).toMatchObject({ repriced: true, priceDiffCents: -6000, refundAmountCents: 6000 });
+  });
+
   it("internet banking: the whole $60 goes back by the bank-transfer refund, not to a card", async () => {
     const result = await accept(
       booking({
