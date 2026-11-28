@@ -186,11 +186,7 @@ export function OrganiserGroupBookingCard({
   useEffect(() => {
     fetch("/api/payments/options")
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) =>
-        setInternetBankingEnabled(
-          Boolean(data?.methods?.internetBanking?.enabled)
-        )
-      )
+      .then((data) => setInternetBankingEnabled(Boolean(data?.methods?.internetBanking?.enabled)))
       .catch(() => setInternetBankingEnabled(false));
   }, []);
 

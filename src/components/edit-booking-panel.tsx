@@ -40,7 +40,6 @@ import { AccountCreditCard } from "@/components/edit-booking/account-credit-card
 import { AdminOverrideCard } from "@/components/edit-booking/admin-override-card";
 import { ChangeRequestCard } from "@/components/edit-booking/change-request-card";
 import { useActionFocusReturn } from "@/hooks/use-scroll-to-feedback";
-import type { ChangeRequestAddGuest } from "@/lib/booking-change-request-guests";
 import { EditDatesCard } from "@/components/edit-booking/edit-dates-card";
 import { EditGuestsCard } from "@/components/edit-booking/edit-guests-card";
 import { EditDependantIdentityQuestion } from "@/components/edit-booking/edit-dependant-identity-question";
@@ -107,6 +106,7 @@ import {
   usePromoSelectionState,
 } from "@/components/edit-booking/hooks/use-promo-selection";
 import { useReviewJustificationLatch } from "@/components/edit-booking/hooks/use-review-justification-latch";
+import { useChangeRequestSubmission } from "@/components/edit-booking/hooks/use-change-request-submission";
 
 /**
  * The edit-booking panel's shell: the pending edit's state, the mutations, and
@@ -363,10 +363,7 @@ export function EditBookingPanel({
   const [savedPromoChangeNotApplied, setSavedPromoChangeNotApplied] = useState<
     string | null
   >(null);
-  const [requestReason, setRequestReason] = useState("");
-  const [requestSubmitting, setRequestSubmitting] = useState(false);
-  const [requestError, setRequestError] = useState("");
-  const [requestSuccess, setRequestSuccess] = useState("");
+  const changeRequest = useChangeRequestSubmission(booking.id);
 
   const today = booking.editPolicy.today;
   const minEditableDate = booking.editPolicy.editableFrom ?? today;
@@ -1538,41 +1535,6 @@ export function EditBookingPanel({
     }
   }
 
-  async function handleSubmitChangeRequest(cardAddGuests: ChangeRequestAddGuest[]) {
-    setRequestError("");
-    setRequestSuccess("");
-    focusReturn.capture();
-    setRequestSubmitting(true);
-
-    try {
-      const body = mergeChangeRequestGuests(buildModificationPayload(), cardAddGuests);
-
-      const res = await fetch(`/api/bookings/${booking.id}/change-requests`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...body,
-          reason: requestReason.trim() || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setRequestError(data.error || "Failed to submit request");
-        return false;
-      }
-
-      setRequestReason("");
-      setRequestSuccess("Request sent to admins");
-      return true;
-    } catch {
-      setRequestError("Failed to submit request");
-      return false;
-    } finally {
-      setRequestSubmitting(false);
-      focusReturn.release();
-    }
-  }
-
   function isLockedChangeError(message: string) {
     return /locked|in-progress|check-in cannot be changed/i.test(message);
   }
@@ -1862,15 +1824,17 @@ export function EditBookingPanel({
 
       {showChangeRequestPath && (
         <ChangeRequestCard
-          reason={requestReason}
-          submitting={requestSubmitting}
-          error={requestError}
-          success={requestSuccess}
+          reason={changeRequest.reason}
+          submitting={changeRequest.submitting}
+          error={changeRequest.error}
+          success={changeRequest.success}
           hasEditorChanges={hasChanges}
           editorChanges={buildModificationPayload()}
           guestContext={{ booking, ageTierOptions, familyMembers }}
-          onReasonChange={setRequestReason}
-          onSubmit={handleSubmitChangeRequest}
+          onReasonChange={changeRequest.setReason}
+          onSubmit={(cardAddGuests) =>
+            changeRequest.submit(() => mergeChangeRequestGuests(buildModificationPayload(), cardAddGuests))
+          }
         />
       )}
 
