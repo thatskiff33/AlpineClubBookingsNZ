@@ -352,6 +352,19 @@ describe("organiser extra adjustment provider execution", () => {
     expect(mocks.createCreditNotes).toHaveBeenCalledOnce();
     expect(mocks.settle).toHaveBeenCalledOnce();
   });
+  it("#5235 review (M22): the refund note is coded to the Hut Fee Refunds mapping, expense account or not, under the booking's anchored treatment", async () => {
+    const { getResolvedAccountMapping } = await import("@/lib/xero-mappings");
+    const { resolveXeroTaxRendering } = await import("@/lib/xero-tax-anchors");
+    vi.mocked(getResolvedAccountMapping).mockImplementationOnce(async (key: string) =>
+      ({ code: key === "hutFeeRefunds" ? "410" : "200", itemCode: null, codeExplicitlyConfigured: true }) as never);
+    mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: Invoice.StatusEnum.PAID };
+    await execute(payload({ purpose: "refund", amountCents: 500, cashAtPlanCents: 6_000, handBackTaskId: "hand-back" }), claim);
+    expect(getResolvedAccountMapping).toHaveBeenCalledWith("hutFeeRefunds");
+    expect(vi.mocked(resolveXeroTaxRendering)).toHaveBeenCalledWith({ kind: "booking", bookingId: "child" });
+    expect(mocks.createCreditNotes.mock.calls[0]?.[1]).toMatchObject({
+      creditNotes: [{ type: "ACCRECCREDIT", lineAmountTypes: "Inclusive", lineItems: [{ unitAmount: 5, accountCode: "410", taxType: "OUTPUT2" }] }],
+    });
+  });
   it("pays out a settled invoice's refund note using the completed bank-transfer record", async () => {
     mocks.invoice = { ...mocks.invoice, amountPaid: 60, amountDue: 0, status: Invoice.StatusEnum.PAID };
     await execute(payload({ purpose: "refund", amountCents: 500, cashAtPlanCents: 6_000, handBackTaskId: "hand-back" }), claim);
