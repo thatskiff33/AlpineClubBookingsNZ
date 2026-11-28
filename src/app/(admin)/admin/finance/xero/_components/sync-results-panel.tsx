@@ -28,7 +28,7 @@ export function SyncResultsPanel({
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>Results</CardTitle>
+        <CardTitle headingLevel={2}>Results</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-2 text-sm">

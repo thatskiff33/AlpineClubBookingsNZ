@@ -156,7 +156,7 @@ export function AutomaticRefundNoticesCard({
   return (
     <Card data-testid="automatic-refund-notices">
       <CardHeader>
-        <CardTitle className="text-base">
+        <CardTitle headingLevel={2} className="text-base">
           Refunded automatically &mdash; nothing to pay back ({notices.length})
         </CardTitle>
       </CardHeader>

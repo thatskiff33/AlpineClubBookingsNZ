@@ -27,7 +27,9 @@ export function KpiStatCard({
     <Card className="reports-print-card">
       <CardHeader className="pb-3">
         <CardDescription>{title}</CardDescription>
-        <CardTitle className="text-3xl text-card-foreground">{value}</CardTitle>
+        {/* The figure itself, drawn large: a value under its label, not a
+            heading (INV-PUB-006). */}
+        <CardTitle headingLevel="none" className="text-3xl text-card-foreground">{value}</CardTitle>
       </CardHeader>
       {description || footnote ? (
         <CardContent className="space-y-2">

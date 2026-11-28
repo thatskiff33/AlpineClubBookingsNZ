@@ -332,7 +332,7 @@ export function XeroRecordActivityPanel({
       <Card className={className}>
         <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div className="space-y-1">
-            <CardTitle className="text-base font-medium">Xero Activity</CardTitle>
+            <CardTitle headingLevel="none" className="text-base font-medium">Xero Activity</CardTitle>
             <CardDescription>Recent sync operations, invoices, and contact links for this member.</CardDescription>
           </div>
           <Button variant="outline" size="sm" asChild>
@@ -435,7 +435,7 @@ export function XeroRecordActivityPanel({
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div className="space-y-1">
-            <CardTitle>Record-Scoped Xero Activity</CardTitle>
+            <CardTitle headingLevel={2}>Record-Scoped Xero Activity</CardTitle>
             <CardDescription>
               Operations and object links for {data?.rootRecord.label ?? "this record"} and its included Xero scope.
             </CardDescription>
@@ -528,7 +528,7 @@ export function XeroRecordActivityPanel({
 
       <Card>
         <CardHeader>
-          <CardTitle>Xero Object Links</CardTitle>
+          <CardTitle headingLevel={2}>Xero Object Links</CardTitle>
           <CardDescription>
             Canonical invoice, credit note, contact, and allocation links already attached to this record scope.
           </CardDescription>
@@ -590,7 +590,7 @@ export function XeroRecordActivityPanel({
 
       <Card>
         <CardHeader>
-          <CardTitle>Operations</CardTitle>
+          <CardTitle headingLevel={2}>Operations</CardTitle>
           <CardDescription>
             {data && data.summary.totalOperations > data.operations.length
               ? `Showing the latest ${data.operations.length} of ${data.summary.totalOperations} operations in this scope.`
@@ -621,7 +621,7 @@ export function XeroRecordActivityPanel({
 
       <Card>
         <CardHeader>
-          <CardTitle>Inbound Events</CardTitle>
+          <CardTitle headingLevel={2}>Inbound Events</CardTitle>
           <CardDescription>
             Stored Xero webhook events that match the current record scope. Replay them here after
             handler changes or to retry a failed reconciliation.

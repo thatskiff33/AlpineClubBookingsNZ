@@ -145,7 +145,7 @@ export function ManualRefundTaskReopenCard({
   return (
     <Card data-testid="dismissed-manual-refund-tasks">
       <CardHeader>
-        <CardTitle className="text-base">
+        <CardTitle headingLevel={2} className="text-base">
           Closed with no adjustment, lately ({dismissed.length})
         </CardTitle>
       </CardHeader>

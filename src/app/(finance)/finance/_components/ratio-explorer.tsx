@@ -222,7 +222,7 @@ export function RatioExplorer({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Ratios</CardTitle>
+          <CardTitle headingLevel={2}>Ratios</CardTitle>
           <CardDescription>
             No monthly Xero data is stored yet. Run the finance sync, or the
             monthly-facts backfill for history, then revisit this view.
@@ -236,7 +236,7 @@ export function RatioExplorer({
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Ratio explorer</CardTitle>
+          <CardTitle headingLevel={2}>Ratio explorer</CardTitle>
           <CardDescription>
             Pick any category and compare it to another — for example catering
             cost as a share of hut-fee income — then flick through financial
@@ -361,7 +361,7 @@ export function RatioExplorer({
 
       <Card>
         <CardHeader>
-          <CardTitle>Monthly ratio trend</CardTitle>
+          <CardTitle headingLevel={2}>Monthly ratio trend</CardTitle>
           <CardDescription>
             {numerator?.name} as a share of {denominator?.name} per month over{" "}
             {activeChip?.label}. Months where the denominator is zero are
