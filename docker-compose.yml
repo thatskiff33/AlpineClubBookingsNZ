@@ -169,6 +169,10 @@ x-app-environment: &app-environment
   # side is POST_IMAGE_HOST_DIR, which the app never sees and must never be
   # given — a host path is not visible from inside the container.
   POST_IMAGE_DIR: ${POST_IMAGE_DIR:-/images}
+  # Owed admin alerts the database refused during an outage (#5297). Fixed, not
+  # read from .env: it must match the admin_alert_spool mount on the app service
+  # below and the directory the image creates for it.
+  ADMIN_ALERT_SPOOL_DIR: /admin-alert-spool
   LOG_LEVEL: ${LOG_LEVEL:-info}
   SENTRY_DSN: ${SENTRY_DSN:-}
   NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
@@ -358,6 +362,12 @@ x-app-service: &app-service
     # directory is web-served without a session check, and these images are
     # members-only.
     - ${POST_IMAGE_HOST_DIR:-post_image_data}:${POST_IMAGE_DIR:-/images}
+    # Owed admin alerts the database refused during an outage (#5297). One
+    # named volume for every slot, so a file a web slot wrote survives its
+    # restart or a blue/green swap and the cron leader's sweep moves it into the
+    # database. Inherits uid 1001 and mode 0700 from the image. Not backed up:
+    # each file is deleted once the database holds it.
+    - admin_alert_spool:/admin-alert-spool
   cap_drop: [ALL]
   security_opt:
     - no-new-privileges:true
@@ -715,3 +725,6 @@ volumes:
   # no host directory. Like backup_data it is NOT pruned by any tooling here: it
   # holds members' own photographs.
   post_image_data:
+  # Owed admin alerts kept on disk while the database refused them (#5297).
+  # Normally empty; never prune it while a file is in it.
+  admin_alert_spool:

@@ -19,12 +19,12 @@ import {
   ALERT_ONCE_EVER_WINDOW_MS,
   deferAlertCooldown,
   listOwedAlertKeys,
-  markAlertOwed,
   noteOwedAlertAttempt,
   releaseAlertCooldown,
   settleOwedAlert,
 } from "@/lib/alert-cooldown";
 import { claimAlertCooldownFailOpen } from "@/lib/alert-cooldown-fail-open";
+import { markAlertOwedOrSpool } from "@/lib/admin-alert-spool";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import type { AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
@@ -265,14 +265,19 @@ export async function alertExpiredHold(
       );
       return;
     }
-    await markAlertOwed({
-      key: owedAlertKey(reason, hold.id),
-      // #3635 (N1): a throw is transient, so it is due on the next run; a send
-      // that reached nobody waits a day, as the drain's own retries do.
-      due: sendOutcome === "send-threw" ? "next-run" : "after-retry",
-      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
-    }).catch((err) =>
-      logger.error({ err, ...context }, "Failed to mark an undelivered hold alert as owed"),
+    // #5297: a database that refuses the marker leaves it on disk for the
+    // once-ever alert sweep to store, so the drain below still finds it.
+    await markAlertOwedOrSpool(
+      {
+        key: owedAlertKey(reason, hold.id),
+        // #3635 (N1): a throw is transient, so it is due on the next run; a send
+        // that reached nobody waits a day, as the drain's own retries do.
+        due: sendOutcome === "send-threw" ? "next-run" : "after-retry",
+        retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+      },
+      { label: "undelivered hold alert's owed marker", context },
+    ).catch((err) =>
+      logger.error({ err, ...context }, "Failed to mark an undelivered hold alert as owed, in the database or on disk"),
     );
   }
 

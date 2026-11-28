@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 
 import { readOnceEverClaimState, sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
-import { markAlertOwed, settleOwedAlert } from "@/lib/alert-cooldown";
+import { markAlertOwedOrSpool } from "@/lib/admin-alert-spool";
+import { settleOwedAlert } from "@/lib/alert-cooldown";
 import type { ClubFormat } from "@/lib/club-format";
 import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
 import logger from "@/lib/logger";
@@ -16,8 +17,9 @@ import logger from "@/lib/logger";
  *
  * - The claim is already kept, or deferred for a day: nothing is written or
  *   sent (a deferred alert's owed row was stored by the call that deferred).
- * - The owed row cannot be stored: logged, and the alert is still sent once,
- *   exactly as before #5255.
+ * - The owed row cannot be stored: it is kept on local disk for the sweep to
+ *   store once the database answers (#5297, `admin-alert-spool.ts`). Only if
+ *   the disk refuses it too is it logged and sent once, as before #5255.
  * - The claim is kept: the owed row is settled. Otherwise it stays for the sweep.
  *
  * Re-sending never doubles an alert: the sweep sends only through the same
@@ -45,9 +47,15 @@ export async function sendReplayableAdminAlertOnceEver({
   }
   const stored: StoredReplayableAlert = { label, alert };
   try {
-    await markAlertOwed({ key: onceEverOwedKey(key), due: "after-retry", retryAfterMs: 0, replayAlert: stored, now });
+    await markAlertOwedOrSpool(
+      { key: onceEverOwedKey(key), due: "after-retry", retryAfterMs: 0, replayAlert: stored, now },
+      { label, context },
+    );
   } catch (err) {
-    logger.error({ ...context, err }, `Failed to store the ${label} for the sweep; sending it once without a retry`);
+    logger.error(
+      { ...context, err },
+      `Failed to store the ${label} for the sweep, in the database or on disk; sending it once without a retry`,
+    );
   }
   return sendStoredAlertOnceEver({ key, context, label, send });
 }

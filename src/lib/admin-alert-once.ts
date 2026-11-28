@@ -63,7 +63,9 @@ export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<b
  * `sendAdminAlertOnceEver`, `sendAdminAlertOnceEverClaim` or the takeover
  * sequence `sendAdminAlertOnceEverWithTakeover` (`admin-alert-once-takeover.ts`);
  * one that raises its alert only once calls `sendReplayableAdminAlertOnceEver`,
- * which stores the alert for the sweep to re-send. Each caller's own docblock
+ * which stores the alert for the sweep to re-send, on local disk while the
+ * database refuses the write (#5297, `admin-alert-spool.ts`, which the sweep
+ * moves into the database before it sends). Each caller's own docblock
  * says how it runs. A give-back cannot make a sibling send twice: it deletes
  * only a row under this call's own stamp, this call sent nothing, and a
  * sibling that read that row held sent nothing. Limit: two claims for one key

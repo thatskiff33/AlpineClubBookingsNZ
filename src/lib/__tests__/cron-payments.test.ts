@@ -128,7 +128,7 @@ describe("POST /api/cron/payments", () => {
     mockRunCreditReleaseAskSweep.mockResolvedValue({ enqueued: 0, payments: null, closes: null });
     mockDrainOwedNewCaptureAlerts.mockResolvedValue({ checked: 0, sent: 0 });
     mockSweepVoidedCombinedGroupInvoiceCover.mockResolvedValue({ checked: 0, released: 0, releaseFailures: 0, truncated: false, failed: false });
-    mockSweepOnceEverAlerts.mockResolvedValue({ released: 0, resent: 0, settled: 0, dropped: 0, failed: 0 });
+    mockSweepOnceEverAlerts.mockResolvedValue({ spooled: 0, released: 0, resent: 0, settled: 0, dropped: 0, failed: 0 });
     mockReapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
       released: 0,
@@ -228,7 +228,7 @@ describe("POST /api/cron/payments", () => {
   });
 
   it("records a once-ever alert sweep with failed rows as a warning admin cron health shows (#5255)", async () => {
-    mockSweepOnceEverAlerts.mockResolvedValueOnce({ released: 1, resent: 0, settled: 0, dropped: 0, failed: 2 });
+    mockSweepOnceEverAlerts.mockResolvedValueOnce({ spooled: 0, released: 1, resent: 0, settled: 0, dropped: 0, failed: 2 });
     const { POST } = await import("@/app/api/cron/payments/route");
     const response = await POST(authorisedRequest("http://localhost/api/cron/payments?task=recovery"));
 

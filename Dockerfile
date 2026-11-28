@@ -232,6 +232,12 @@ RUN mkdir -p /backups && chown -R nextjs:nodejs /backups
 # ownership so streaming large compressed backups does not consume container RAM.
 RUN mkdir -p /tmp/tacbookings-backups && chown nextjs:nodejs /tmp/tacbookings-backups
 
+# Owed admin alerts the database refused during an outage wait here for the
+# once-ever alert sweep (#5297, ADMIN_ALERT_SPOOL_DIR). A named volume shared by
+# every app container is mounted over it, inheriting this owner and mode on
+# first init. Outside /app, so nothing in it is ever web-served.
+RUN mkdir -p /admin-alert-spool && chown nextjs:nodejs /admin-alert-spool && chmod 700 /admin-alert-spool
+
 USER nextjs
 
 EXPOSE 3000
