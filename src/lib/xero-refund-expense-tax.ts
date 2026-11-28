@@ -38,7 +38,7 @@ import type { XeroTaxRateOption } from "@/lib/xero-tax-rate-options";
 const PAYMENT_STATUSES_HOLDING_MONEY = CAPTURED_PAYMENT_STATUS_LIST.filter((status) => status !== "REFUNDED");
 
 /** The tax codes of the registered periods in force on any day from `from` on. Pure. */
-export function registeredTaxTypesFrom(schedule: ClubTaxSchedule, from: CalendarDate): string[] {
+function registeredTaxTypesFrom(schedule: ClubTaxSchedule, from: CalendarDate): string[] {
   const types = schedule.flatMap((period, index) => {
     const next = schedule[index + 1];
     const stillInForce = !next || compareCalendarDates(next.effectiveFrom, from) > 0;

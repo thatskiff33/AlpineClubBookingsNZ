@@ -77,7 +77,7 @@ export function changedMappingCodes(
 }
 
 /** A refused code: the mapping it was for, and the sentence. */
-export interface MappingCodeRefusal {
+interface MappingCodeRefusal {
   key: AccountMappingKey;
   message: string;
 }

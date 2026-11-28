@@ -212,7 +212,7 @@ const NOT_CARD_NOTE_METHODS = new Set(["internet-banking", "account-credit"]);
  * payment was one before a method was recorded. Notes are per payment, so the
  * latest stands for the failed refunds this reversal answers.
  */
-export async function readCardRefundNoteLineCodes(
+async function readCardRefundNoteLineCodes(
   paymentId: string,
 ): Promise<Pick<LineItem, "itemCode" | "accountCode"> | null> {
   const { prisma } = await import("@/lib/prisma");
