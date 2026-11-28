@@ -10,17 +10,24 @@
   change.
 
   Refund credit notes carry the same GST whichever account you choose. Xero
-  decides which tax rates may be used on an expense account, so the Xero check
-  on **System Health** now warns a GST-registered club when **Hut Fee
-  Refunds** is on an expense account and Xero says the club's tax rate cannot
-  be used on expenses, because Xero would reject those credit notes. Read it
-  after choosing an expense account.
+  decides which tax rates may be used on an expense account, so for a
+  GST-registered club the save refuses an expense account on **Hut Fee
+  Refunds** when Xero says a tax rate refund notes can still carry cannot be
+  used on expenses, because Xero would reject those credit notes; the refusal
+  shows on that row. The Xero check on **System Health** warns if that changes
+  later in Xero. A failed card refund's reversal invoice is now coded like the
+  card refund note it undoes, even after the mapping changes.
 
   Saving a mapping now checks the kind of account, for every mapping: a code
   you set or change that your chart of accounts shows is the wrong kind, such
-  as a bank, asset or liability account on **Hut Fee Refunds**, is refused with
-  a message naming the mapping, and nothing is saved. A configuration import is
-  held to the same rule. A code already stored is left alone when you save
+  as a bank, asset or liability account on **Hut Fee Refunds**, or that is not
+  an active account, is refused with a message naming the mapping, and nothing
+  is saved. When the app's copy of the chart is over an hour old the save reads
+  it from Xero first, and says to try again if Xero cannot be reached; only
+  while Xero is not connected is a code saved unchecked. Revenue mappings now
+  accept sales and other-income accounts too. A configuration import is held
+  to the same rules; with a stale copy it asks you to refresh the reference
+  data first. A code already stored is left alone when you save
   other mappings; the setup checklist and the mapping row point it out instead.
   The **Subscription account code** list on the subscription lockout screen
   now offers revenue accounts only, the kind that mapping accepts.

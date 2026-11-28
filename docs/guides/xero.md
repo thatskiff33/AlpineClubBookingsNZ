@@ -315,20 +315,27 @@ the added nights as income, not one net figure.
 
 Which is right is your treasurer's or accountant's call. Either way the credit
 note carries the same GST as the invoice it refunds. Xero decides which tax
-rates may be used on an expense account, so if your club is GST-registered and
-chooses an expense account, read the Xero check on
-[System Health](health.md) afterwards: it warns when Xero says the club's tax
-rate cannot be used on expenses, because Xero would then reject refund credit
-notes. If it does, map **Hut Fee Refunds** back to a revenue account or ask
-your accountant which account and rate to use.
+rates may be used on an expense account, so when a GST-registered club chooses
+an expense account the save asks Xero, and refuses it on the row if a tax rate
+refund notes can still carry (the rate of any registered period a refundable
+booking was made in, or one in force from today) cannot be used on expenses:
+Xero would reject those credit notes. Map **Hut Fee Refunds** to a revenue
+account instead, or ask your accountant which account and rate to use. The Xero
+check on [System Health](health.md) warns if that changes later in Xero. A
+failed card refund's reversal invoice is coded like the card refund note it
+undoes, even if the mapping has changed since.
 
 **Save refuses the wrong kind of account.** When you set or change a mapping,
-the app checks the code against its copy of your chart of accounts and refuses,
-for example, an asset, liability or bank account on **Hut Fee Refunds**. The
-message names the mapping and nothing is saved. A code the copy does not list
-is accepted, as is any code while Xero is not connected; **Refresh Xero
-reference data** on the mappings card renews the copy. If Xero has changed
-the class assigned to a code, refresh before retrying a refused save. A code saved before
+the app checks the code against your chart of accounts, reading it from Xero
+first if its copy is more than an hour old, and refuses, for example, an asset,
+liability or bank account on **Hut Fee Refunds**, or a code that is not an
+active account (an archived one). Revenue mappings take any income account:
+revenue, sales or other income. The message names the mapping and nothing is
+saved. If Xero cannot be reached the save says so; try again. Only while Xero
+is not connected is a code saved unchecked. **Refresh Xero reference data** on
+the mappings card renews the copy; do that first for an account just created in
+Xero. A stored code the chart does not list gets its own notice on its row.
+If a configuration import is running, the save asks you to try again. A code saved before
 this check existed is left alone when you save other mappings, and the setup
 checklist and the mapping row point it out. The checklist uses the last stored chart even after its hour is up; refresh it if the account has changed in Xero. If another save changes an account
 code after yours starts checking it but before it writes, reload and try again.

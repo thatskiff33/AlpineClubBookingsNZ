@@ -490,10 +490,11 @@ export function withIndefiniteArticle(noun: string): string {
  * by (`INV-INT-021`, `INV-SSOT`).
  *
  * It answers from the chart of accounts the caller already holds, and refuses
- * only what that chart PROVES is the wrong kind of account. With no chart (Xero
- * not connected, or nothing cached yet), a code the chart does not list, or a
- * row whose class the snapshot does not carry, there is nothing to judge and
- * the code is allowed, as it always was.
+ * only what that chart PROVES is the wrong kind of account. With no chart, a
+ * code the chart does not list, or a row whose class the snapshot does not
+ * carry, this question has nothing to judge. The writers ask more: they fetch
+ * a fresh chart and refuse an unlisted code (`changedCodeRefusals`, owner
+ * decision of 28 Nov 2026).
  *
  * The sentence names the mapping, never the account code: the mapping screen
  * reads a bare "403" in a refusal as "not permitted", and an account can carry

@@ -612,12 +612,18 @@ reversal invoice, a supplementary invoice's negative line, an organiser-extra
 adjustment) still takes its tax type from the club's treatment through
 `xeroLineTax`, never from the account's own default, so a refund to a member
 carries the sales tax the original invoice line carried. Xero decides per tax
-rate which kinds of account the rate may sit on, and this cannot be tested
-without a live organisation, so `readXeroTaxHealth` warns when the refund
-account is an expense account in the chart last stored and Xero says the tax
-code in force cannot be used on expenses: Xero would reject those credit notes.
-It reads that chart even after its hour is up, since one is stored only when an
-administrator opens a screen that lists accounts.
+rate which kinds of account the rate may sit on. The tax codes a refund note
+can still carry are those of every registered period in force from the
+earliest anchor of a refundable booking (stay not ended, or payment still
+holding money) and from today on (`readRefundableTaxTypes`,
+`xero-refund-expense-tax.ts`). The mapping save refuses an expense refunds
+account Xero says one of them cannot sit on (409 on that row; 503 when the
+rates cannot be read), and `readXeroTaxHealth` warns when the stored mapping
+reaches that state another way, judged against the chart last stored, even
+after its hour is up. The card-refund reversal copies the item and account
+codes of the payment's latest live card refund note
+(`hutFeeRefundLineCodedAs`), falling back to today's mapping only when no card
+note can be read.
 `xero-refund-method-documents.test.ts` pins the line for both kinds of account.
 
 ### The journal's GST on each line (#5208)
@@ -843,7 +849,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `xero-invoice-helpers` | Shared date/allocation helpers for the six modules above. |
 | `xero-account-class` | Leaf, pure: the ONE reading of a Xero account's CLASS (#2717), shared by the admin account pickers and the finance reports so they cannot come to disagree about what an expense account is. |
 | `xero-account-mapping-keys` | Leaf, pure data: the ONE registry of account mapping keys (#2717) — label, description, the required list of account classes it accepts (`accepts`; each optionally narrowed to named types, and `hutFeeRefunds` accepts revenue or expense, #5235), default code, registered fallback, and which keys carry a Xero Item code. The admin picker, the API allowlist, `xero-mappings`, the setup checklist and the seed all derive from it, which is what makes `INV-INT-021`'s filter structural rather than policed. `mappingWriteViolation` is the write path's refusal rule for what the registry alone can see; `mappingCodeClassViolation` is the one question "is this code the right kind of account in this chart", asked by the save, the config import and the setup check. |
-| `xero-account-mapping-write-checks` | What both writers of the mapping rows ask before they write (#5235): `changedCodeClassViolations` judges only the codes a write sets or changes, against the chart of accounts the caller supplies, and `accountMappingImportFindings` adds the Opening Credits rules for the config import. |
+| `xero-account-mapping-write-checks` | What both writers of the mapping rows ask before they write (#5235): `changedMappingCodes` picks the codes a write sets or changes, `changedCodeRefusals` refuses one the chart does not list or shows is the wrong kind, and `accountMappingImportFindings` applies both, with the Opening Credits rules, to the config import against its stored chart. The save (`xero-account-mapping-save`) reads its chart through `fetchChartOfAccountsFromXero` when the stored one is stale. |
 | `xero-account-mapping-save` | The Account Mapping screen's save, behind `PUT /api/admin/xero/account-mappings` (#5235, #5391): the account-class check and the Opening Credits refusals, then the writes in one transaction under the config-import key ([locking guide](../CONCURRENCY_AND_LOCKING.md#the-xero-account-mapping-save-takes-the-config-import-key-5391)). A refused save writes nothing. |
 | `xero-applied-credit-mint-accounts` | Leaf, pure: where a minted remainder note for a noteless lot lands (#2717). It is the noteless remainder, not a manual grant that already queued its own note. `mintSliceMappingKey` still sends a noteless legacy `ADMIN_ADJUSTMENT` to `goodwillWriteOffs` and a member's own money to `hutFeeRefunds`; an opening credit (#4988) goes to the optional `openingCredits` mapping, which falls back to `hutFeeRefunds` while unset. The line coding beside it keeps an unconfigured club's note unchanged, and marks the share the Opening Credits mapping itself coded as the note's one Exempt line, never merged into an income line. |
 | `xero-mappings` | Account-code / item-code resolution from `XeroAccountMapping`/`XeroItemCodeMapping` (with legacy fallbacks), entrance-fee categorisation and idempotency keys. `getResolvedAccountMappingWithFallback` applies a key's registered one-hop fallback (`INV-INT-021`), and `isCodeExplicitlyConfigured` is the one definition of a club having CHOSEN a code. |

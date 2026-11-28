@@ -45,10 +45,13 @@ deeper reference for what each category contains and the import safety model.
   install's stored chart of accounts, by the rule the account mapping screen's
   save uses (`mappingCodeClassViolation`, `INV-INT-021`; owner decision,
   22 Nov 2026). A code the chart shows is the wrong kind, such as a bank account
-  on **Hut Fee Refunds**, is an **error** that disables Apply. A code the chart
-  does not list, or any code while no chart is stored (Xero not connected, or
-  the stored copy expired), is not judged, and a code the import leaves as
-  stored is not either. Each account mapping key may appear only once in the
+  on **Hut Fee Refunds**, or a code the chart does not list (an archived
+  account), is an **error** that disables Apply (`changedCodeRefusals`). While
+  Xero is connected but no chart was read in the last hour, the plan, which
+  asks Xero nothing, errors and says to refresh the reference data on the
+  account mapping screen, then import again (owner decision, 28 Nov 2026).
+  Only while Xero is not connected is a code not judged; a code the import
+  leaves as stored is not either. Each account mapping key may appear only once in the
   CSV; a duplicate blocks Apply. The bundle format is unchanged: the rule lives in
   code, not in the bundle.
 - **Validation blocks apply:** every row is strictly validated at plan time —

@@ -361,10 +361,10 @@ legitimately depend on being offered an out-of-service lodge.
   `src/lib/xero-account-mapping-keys.ts`, the one registry the picker, API
   allowlist, resolver and seed derive from; `accountsForMappingKey` is a
   picker's only filter.
-- **A code set or changed is checked against the cached chart** (owner,
-  22 Nov 2026, #5235): the API and config transfer refuse one it places outside
-  `accepts` (`changedCodeClassViolations`), never one it cannot place; setup
-  reports a stored one. `mappingWriteViolation` refuses what the registry
+- **A code set or changed is checked against a fresh chart** (owner,
+  22/28 Nov 2026, #5235): save and config transfer refuse one outside
+  `accepts` or unlisted (`changedCodeRefusals`), fetching a stale chart (503
+  if unreachable). Unchecked only while disconnected. `mappingWriteViolation` refuses what the registry
   sees: unknown key, account code on an item-only key, item code on a key
   reading none, blank code.
 - **The fallback is ONE hop, and verbatim**: while unset,

@@ -9599,17 +9599,19 @@ writes only if the rows still pass:
   still minted at one raw site (`config-transfer-lock.ts`, unchanged in
   `SCOPED_ADVISORY_LOCK_INVENTORY`). The route's own test pins the order of the
   lock, the re-read and the writes.
-- **What runs outside the lock (`INV-LOCK-004`).** The account-class check reads
-  the cached chart of accounts through the module client, and the Exempt
-  prerequisite may ask Xero for its tax rates, so both run before the
+- **What runs outside the lock (`INV-LOCK-004`).** The account check reads the
+  stored chart through the module client, or asks Xero for one when it is
+  stale (#5235 review), the expense refunds check may ask Xero for its tax
+  rates, and so may the Exempt prerequisite, so all of them run before the
   transaction opens. Which codes a save sets or changes decides both, so inside
   the lock the save also compares the stored code of every key it writes with
   what the first read saw, and refuses with a 409 the officer can retry if one
   moved. A refused save writes nothing.
 
 The save opens its transaction with Prisma's default budget. A save that waits
-longer than that behind a long import fails without writing, as the lodge create
-and rename routes that share this key do.
+longer than that behind a long import fails without writing; since the #5235
+review it answers that (`isTransactionContention`, P2028 or P2034) with a 409
+asking the officer to try again, not a 500.
 
 `xero-account-mapping-save-race.realdb.test.ts` proves on real PostgreSQL that of
 two queued saves that would share an account between them exactly one is
