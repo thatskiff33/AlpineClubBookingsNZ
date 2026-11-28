@@ -999,6 +999,50 @@ overwrite the header, and with no proxy the caller sets both headers freely.
 Not every audit row holds a visitor's address in that column: a scheduled job
 can record its own tag there, and a row written without a request has none.
 
+## The site's own address in links (GHSA-q9f4-243m-6f54)
+
+Audience: Operator, Developer.
+
+The site's own origin comes from configuration, `NEXTAUTH_URL`, and server code
+reads it through `getAppBaseUrl()` in `src/lib/app-url.ts`. That function takes
+no argument. The address a request claims (`Host`, `X-Forwarded-Host`,
+`request.nextUrl`, which Next.js derives from them, and `request.url`) is
+whatever the caller sent wherever a proxy does not overwrite it, so no link,
+redirect or stored address is based on it. With no `NEXTAUTH_URL` set the
+origin is the built-in `http://localhost:3000`.
+
+Where a member tells the app which page they were on (the issue-report widget
+posts the browser's address), `rebaseOntoAppOrigin()` keeps the path, query and
+fragment and places them on the configured origin. The host that was sent is
+discarded. `src/lib/issue-report-page-url.ts` applies it when a report is
+stored and again when the admin list and detail read one, so a row written
+before this rule is held to it as well.
+
+`src/lib/__tests__/request-origin-census.test.ts` fails on a new read of the
+request's host, or of the request's address as a base address, outside the two
+expressions it lists with their reasons. Both send the value back only to the
+caller who supplied it: the Content-Security-Policy for the display pages adds
+the request's own origin, and the sign-in rate-limit answer carries a login
+address built from the request's own URL. The census matches text and names in
+its header what it cannot see.
+
+What this does not cover:
+
+- Many email builders read `NEXTAUTH_URL` directly instead of calling
+  `getAppBaseUrl()`. They use the configured value, not the request's.
+- Pages in the browser build share links from the address the browser is on.
+- A member's own words in an alert (a page title, a description) are shown as
+  escaped text. The app makes none of it a link, but a mail client may turn an
+  address a member typed into one.
+
+Before this rule, the issue-report route accepted an origin taken from
+`X-Forwarded-Host` or `Host`; three other places fell back to the request's
+origin, and five redirects to the request's URL, when `NEXTAUTH_URL` was unset.
+In a deployment where a caller could set those headers, a signed-in member
+could make the link in the officers' issue-report alert, and the page link in
+the admin issue-report page, point at another site. The reference deployment
+was not affected: its Caddy sets the forwarded headers itself.
+
 ## Token-bearing URL paths
 
 ### Context

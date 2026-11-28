@@ -1,3 +1,4 @@
+import { issueReportPageUrlToShow } from "@/lib/issue-report-page-url";
 import { NextRequest, NextResponse } from "next/server";
 import type { IssueReportOrigin } from "@prisma/client";
 import { issueReportListQuerySchema } from "@/lib/admin-support-api/system";
@@ -170,7 +171,7 @@ export async function GET(request: NextRequest) {
       request,
       {
         reports: reports.map((report) =>
-          summarizeReport({ ...report, pageUrl: issueReportPageAddressFor(request, report.pageUrl) }, viewerFullAdmin),
+          summarizeReport({ ...report, pageUrl: issueReportPageAddressFor(request, issueReportPageUrlToShow(report.pageUrl)) }, viewerFullAdmin),
         ),
         total,
         page,

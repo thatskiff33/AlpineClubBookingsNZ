@@ -49,6 +49,7 @@ import {
 import { adminSession } from "@/lib/__tests__/helpers/sessions";
 import { emptyAdminPermissionMatrix, type AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { AUDIT_CATEGORIES } from "@/lib/audit-categories";
+import { issueReportPageUrlToShow } from "@/lib/issue-report-page-url";
 import { findMcpAction, splitMcpActionArguments } from "@/lib/mcp/catalogue";
 import { SUPPORT_RECORD_MCP_ACTIONS } from "@/lib/mcp/catalogue/support-records";
 
@@ -223,7 +224,7 @@ describe("list_issue_reports and get_issue_report", () => {
     expect(h.prisma.issueReport.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
   });
 
-  it("sends a connection the page's path only, the browser the address whole", async () => {
+  it("sends a connection the page's path only, the browser the address whole on the configured origin", async () => {
     const pageUrl = "https://club.example.test/login/magic?token=one-time-abc#top";
     h.prisma.issueReport.findMany.mockResolvedValue([{ ...REPORT, pageUrl }]);
     h.prisma.issueReport.count.mockResolvedValue(1);
@@ -232,8 +233,11 @@ describe("list_issue_reports and get_issue_report", () => {
     const one = await expectActionContract({ actionId: "get_issue_report", handler: getIssueReport, args: { id: "report-1" } });
     expect((list.connection as { reports: Array<{ pageUrl: string }> }).reports[0]!.pageUrl).toBe("/login/magic");
     expect((one.connection as { report: { pageUrl: string } }).report.pageUrl).toBe("/login/magic");
-    expect((list.browser as { reports: Array<{ pageUrl: string }> }).reports[0]!.pageUrl).toBe(pageUrl);
-    expect((one.browser as { report: { pageUrl: string } }).report.pageUrl).toBe(pageUrl);
+    // The browser keeps the query and fragment, rebased onto this site (GHSA-q9f4-243m-6f54).
+    const shown = issueReportPageUrlToShow(pageUrl);
+    expect(shown).toMatch(/\/login\/magic\?token=one-time-abc#top$/);
+    expect((list.browser as { reports: Array<{ pageUrl: string }> }).reports[0]!.pageUrl).toBe(shown);
+    expect((one.browser as { report: { pageUrl: string } }).report.pageUrl).toBe(shown);
   });
 
   it("reads one report without its screenshot or browser details, which the browser still gets", async () => {

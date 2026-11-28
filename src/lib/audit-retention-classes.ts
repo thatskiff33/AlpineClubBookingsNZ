@@ -17,6 +17,13 @@ export function isAuditRetentionClass(value: unknown): value is AuditRetentionCl
   return (AUDIT_RETENTION_CLASSES as readonly unknown[]).includes(value);
 }
 
+// The classes the archive is responsible for: copied to the archive database,
+// then deleted from the main table. One list for the archiver and the prune.
+export const ARCHIVABLE_RETENTION_CLASSES: AuditRetentionClass[] = [
+  "sensitive_access",
+  "standard",
+];
+
 // #3940: a stored class outside the set matched no prune branch and was kept
 // forever; it now reads as unclassified, like a NULL class (owner decision,
 // 17 Oct 2026). `notIn` alone would miss NULL (SQL's NOT IN is unknown on

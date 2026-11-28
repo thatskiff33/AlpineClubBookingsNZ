@@ -1,3 +1,4 @@
+import { issueReportPageUrlToShow } from "@/lib/issue-report-page-url";
 import { NextRequest, NextResponse } from "next/server";
 import type { IssueReportOrigin } from "@prisma/client";
 import { issueReportActionSchema } from "@/lib/admin-support-api/system";
@@ -93,7 +94,7 @@ function mapReport(report: LoadedReport, access: IssueReportScreenshotAccess, re
 
   return {
     id: report.id,
-    pageUrl: issueReportPageAddressFor(request, report.pageUrl),
+    pageUrl: issueReportPageAddressFor(request, issueReportPageUrlToShow(report.pageUrl)),
     pageTitle: report.pageTitle,
     description: report.description,
     screenshot: {
