@@ -1,5 +1,19 @@
 import { NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import {
+  PRIVACY_RETENTION_PREVIEW_PAGE_SIZE,
+  privacyRetentionPreviewQuerySchema,
+} from "@/lib/admin-support-api/system";
+import {
+  PRIVACY_RETENTION_CONNECTION_SHAPE,
+  PRIVACY_RETENTION_SAVED_CONNECTION_SHAPE,
+  type PrivacyRetentionAnswer,
+} from "@/lib/connection-shapes/support-system";
+import {
+  arrivesAsMcpConnection,
+  connectionJson,
+  websiteOnlyForConnection,
+} from "@/lib/mcp-connection-request";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import {
@@ -15,23 +29,29 @@ export async function GET(request: Request) {
   });
   if (!guard.ok) return guard.response;
 
+  // The query schema lives in admin-support-api/system.ts, which the AI app
+  // action `get_privacy_retention` offers too (ALP-724).
   const params = new URL(request.url).searchParams;
-  const page = Number(params.get("page") ?? 1);
-  const memberAfter = params.get("memberAfter") ?? undefined;
-  if (memberAfter !== undefined && (memberAfter.length === 0 || memberAfter.length > 200)) {
-    return NextResponse.json({ error: "Invalid member cursor." }, { status: 400 });
+  const query = privacyRetentionPreviewQuerySchema.safeParse({
+    page: params.get("page") ?? undefined,
+    memberAfter: params.get("memberAfter") ?? undefined,
+  });
+  if (!query.success) {
+    const pageInvalid = query.error.issues.some((issue) => issue.path[0] === "page");
+    return NextResponse.json(
+      { error: pageInvalid ? "Page must be a positive whole number." : "Invalid member cursor." },
+      { status: 400 },
+    );
   }
-  if (!Number.isSafeInteger(page) || page < 1) {
-    return NextResponse.json({ error: "Page must be a positive whole number." }, { status: 400 });
-  }
+  const page = query.data.page ?? 1;
+  const memberAfter = query.data.memberAfter;
   const canViewMembership = hasAdminAreaAccess(guard.session.user, {
     area: "membership", level: "view",
   });
-  const pageSize = 25;
   const { settings, ...preview } = await getPrivacyRetentionPreview({
-    page, pageSize, memberAfter, includeMembers: canViewMembership,
+    page, pageSize: PRIVACY_RETENTION_PREVIEW_PAGE_SIZE, memberAfter, includeMembers: canViewMembership,
   });
-  return NextResponse.json({
+  const answer: PrivacyRetentionAnswer = {
     settings,
     clearedBookingDietary: preview.clearedBookingDietary,
     preview: {
@@ -49,9 +69,10 @@ export async function GET(request: Request) {
       memberNextCursor: preview.memberNextCursor,
     } : {}),
     page,
-    pageSize,
+    pageSize: PRIVACY_RETENTION_PREVIEW_PAGE_SIZE,
     canViewMembership,
-  });
+  };
+  return connectionJson(request, answer, PRIVACY_RETENTION_CONNECTION_SHAPE);
 }
 
 export async function PUT(request: Request) {
@@ -80,8 +101,19 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error }, { status: 403 });
     }
   }
+  // ALP-724: session replay records members' sessions to a third party. That
+  // is privacy posture, website-only, so an AI app connection must send the
+  // saved value back unchanged.
+  if (arrivesAsMcpConnection(request)) {
+    const saved = current ??= await getPrivacyRetentionSettings();
+    if (parsed.data.sentryReplayEnabled !== saved.sentryReplayEnabled) {
+      return websiteOnlyForConnection(
+        "Session replay records members' sessions to an outside service, so it is switched on or off on the club website.",
+      );
+    }
+  }
   const settings = await savePrivacyRetentionSettings(parsed.data, guard.session.user.id);
   // #4914: stored CMS pages render {{email-log-retention}} from these settings.
   revalidatePublicSite();
-  return NextResponse.json({ settings });
+  return connectionJson(request, { settings }, PRIVACY_RETENTION_SAVED_CONNECTION_SHAPE);
 }

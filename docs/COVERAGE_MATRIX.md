@@ -37,8 +37,10 @@ Bookings hub's areas (`bed-allocation`, `book`, `booking-approvals`,
 `deletion-requests`, `family-groups`, `induction`, `member-applications`,
 `member-fields`, `members`, `membership-cancellations`, `membership-setup`,
 `membership-types`, `subscription-categories`, `subscription-lockout`) in
-`membership/` (C9 #4806), and the Lodge hub's `display` and `lodges` areas in
-`lodge-ops/` (C11 part 1 #4808; its other areas move in part 2). Member
+`membership/` (C9 #4806), and the Lodge hub's areas (`calendar`, `chores`,
+`display`, `food-orders`, `hut-leaders`, `lockers`, `lodge`, `lodge-instructions`,
+`lodges`, `maintenance-reports`, `rooms-beds`, `roster`, `work-parties`) in
+`lodge-ops/` (C11 #4808). Member
 detail, member merge, induction print and induction settings are not areas; they
 live under `members/` and `induction/`. The
 count that used to stand here said 70 and was measured once; it had already
@@ -89,7 +91,7 @@ For what an officer sees and does on each screen, use the
 | `book` | bookings | — (admin book-on-behalf) | [guide](guides/book.md) | 1 |
 | `booking-approvals` | bookings | `STATE_MACHINES.md` | [guide](guides/booking-requests.md) (redirect → Approvals tab) | 1 |
 | `booking-change-requests` | bookings | `STATE_MACHINES.md` | [guide](guides/booking-requests.md) (redirect → Changes tab) | 1 |
-| `booking-import` | bookings (page); finance and bookings (API, edit on both to import or reverse) | [`design/booking-import.md`](design/booking-import.md), [`STATE_MACHINES.md`](STATE_MACHINES.md#paid-booking-import-batch-lifecycle-5005-child-a), `INV-PAY-161`, `INV-PAY-163`, `INV-CAP-040`; batch page `booking-import/[id]` | [guide](guides/moving-in.md#7-future-bookings-import-prepaid-stays) | — (#5005, postdates #2050) |
+| `booking-import` | bookings (page); finance and bookings (API, edit on both to import or reverse) | [`design/booking-import.md`](design/booking-import.md), [`STATE_MACHINES.md`](STATE_MACHINES.md#paid-booking-import-batch-lifecycle-5005-child-a), `INV-PAY-161`, `INV-PAY-164`, `INV-CAP-040`; batch page `booking-import/[id]` | [guide](guides/moving-in.md#7-future-bookings-import-prepaid-stays) | — (#5005, postdates #2050) |
 | `booking-messages` | support | — | [guide](guides/booking-messages.md) | 1 |
 | `booking-policies` | bookings | `ARCHITECTURE.md` (booking policies), `CANCELLATIONS.md` | [guide](guides/booking-policies.md) | 1 |
 | `booking-requests` | bookings | `ARCHITECTURE.md` (public booking requests) | [guide](guides/booking-requests.md) | 1 |

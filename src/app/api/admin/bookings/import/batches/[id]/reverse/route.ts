@@ -16,7 +16,7 @@ import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 /**
  * POST /api/admin/bookings/import/batches/[id]/reverse
- * Reverse an import batch's untouched bookings (#5005; `INV-PAY-163`), a
+ * Reverse an import batch's untouched bookings (#5005; `INV-PAY-164`), a
  * bounded slice per call: the screen repeats the call, passing back
  * `nextAfterLineNumber` as `afterLineNumber`, until `remaining` is zero.
  * Touched bookings are kept and named. Needs finance edit and bookings edit

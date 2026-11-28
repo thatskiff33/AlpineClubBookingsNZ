@@ -3,6 +3,7 @@ import { htmlToPlainText } from "../email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { recordEmailAttempt } from "./attempt-log";
+import { senderEmailRow } from "./handover";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -109,7 +110,11 @@ export type EmailSendOutcome =
       status: "withheld_for_environment";
       emailLogId: string | null;
       reason: EmailEnvironmentWithheldReason;
-    };
+    }
+  // #5298 (INV-INT-043): not transmitted, because the send lost (or could not
+  // write) its row's hand-over claim. The stranded-email sweep owns the row, so
+  // a caller must not send a copy of its own (`isLeftForTheEmailRetryJob`).
+  | { status: "handover_lost"; emailLogId: string };
 
 function assertNoCrlf(value: string, field: string) {
   if (/[\r\n]/.test(value)) {
@@ -362,6 +367,8 @@ export async function sendEmail({
   }
   const emailLogId = recorded.emailLogId;
   if (emailLogId) onAttemptLogged?.(emailLogId);
+  // #5298 (INV-INT-043): every write below lands only while the row is still this sender's.
+  const row = emailLogId ? senderEmailRow(emailLogId, { deferred: Boolean(deferDelivery) }) : null;
 
   // ---------------------------------------------------------------------
   // Per-booking "No emails" switch (#2258, owner decision D10).
@@ -378,29 +385,18 @@ export async function sendEmail({
     const errorMessage = withheld
       ? 'Withheld: this booking has the "No emails" switch turned on'
       : 'Withheld: the booking\'s "No emails" switch could not be read, so the send failed closed';
-    if (emailLogId) {
-      try {
-        await prisma.emailLog.update({
-          where: { id: emailLogId },
-          data: {
-            // A deliberate withhold is terminal and must never be replayed, so
-            // it gets its own status and its body is dropped. An unreadable
-            // switch is a transient fault: FAILED lets the retry cron pick the
-            // row up again, and that cron re-checks the switch before replaying.
-            status: withheld ? "SKIPPED_NO_EMAILS" : "FAILED",
-            ...(withheld
-              ? { htmlBody: null, bookingRetryHtmlBody: null }
-              : {}),
-            errorMessage,
-          },
-        });
-      } catch (err) {
-        logger.error(
-          { err, to: emailLogRecipient, templateName },
-          "Failed to update EmailLog for a withheld booking email",
-        );
-      }
-    }
+    await row?.write(
+      {
+        // A deliberate withhold is terminal and must never be replayed, so
+        // it gets its own status and its body is dropped. An unreadable
+        // switch is a transient fault: FAILED lets the retry cron pick the
+        // row up again, and that cron re-checks the switch before replaying.
+        status: withheld ? "SKIPPED_NO_EMAILS" : "FAILED",
+        ...(withheld ? { htmlBody: null, bookingRetryHtmlBody: null } : {}),
+        errorMessage,
+      },
+      "a withheld booking email",
+    );
 
     logger.warn(
       {
@@ -448,24 +444,15 @@ export async function sendEmail({
   });
 
   if (activeSuppression) {
-    if (emailLogId) {
-      try {
-        await prisma.emailLog.update({
-          where: { id: emailLogId },
-          data: {
-            status: "BOUNCED",
-            htmlBody: null,
-            bookingRetryHtmlBody: null,
-            errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
-          },
-        });
-      } catch (err) {
-        logger.error(
-          { err, to: emailLogRecipient },
-          "Failed to update suppressed email log",
-        );
-      }
-    }
+    await row?.write(
+      {
+        status: "BOUNCED",
+        htmlBody: null,
+        bookingRetryHtmlBody: null,
+        errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
+      },
+      "a suppressed email",
+    );
 
     logger.warn(
       {
@@ -492,7 +479,7 @@ export async function sendEmail({
   // convenience and no longer the safety authority. Reasoning and the two
   // EmailLog shapes: `environment-gate.ts`.
   const environmentGate = await resolveEmailEnvironmentGate({
-    emailLogId,
+    emailLog: row,
     templateName,
     logRecipient: emailLogRecipient,
     // #3035: does this row hold a body the retry cron could replay? The same
@@ -525,19 +512,7 @@ export async function sendEmail({
       );
     }
     // Mark as SENT in dev mode
-    if (emailLogId) {
-      try {
-        await prisma.emailLog.update({
-          where: { id: emailLogId },
-          data: { status: "SENT", sentAt: new Date() },
-        });
-      } catch (err) {
-        logger.error(
-          { err, to: emailLogRecipient, templateName },
-          "Failed to update EmailLog",
-        );
-      }
-    }
+    await row?.write({ status: "SENT", sentAt: new Date() }, "a dev-mode send");
     return {
       status: "sent",
       emailLogId,
@@ -549,6 +524,8 @@ export async function sendEmail({
     const { transporter, modeLabel } = await getEmailTransporter(
       environmentGate.clearance,
     );
+    // #5298 (INV-INT-043): lost or unwritable, send nothing; the sweep owns it.
+    if (row && !(await row.claimHandover(templateName))) return { status: "handover_lost", emailLogId: row.id };
     const result = await transporter.sendMail({
       from,
       to,
@@ -566,41 +543,16 @@ export async function sendEmail({
       modeLabel,
     });
 
-    // Update EmailLog to SENT
-    if (emailLogId) {
-      try {
-        await prisma.emailLog.update({
-          where: { id: emailLogId },
-          data: {
-            status: "SENT",
-            sentAt: new Date(),
-            messageId: result.messageId || null,
-          },
-        });
-      } catch (err) {
-        logger.error({ err }, "Failed to update EmailLog to SENT");
-      }
-    }
+    // A write that misses is only logged: the email went out.
+    await row?.write({ status: "SENT", sentAt: new Date(), messageId: result.messageId || null }, "a sent email");
     return {
       status: "sent",
       emailLogId,
       messageId: result.messageId || null,
     };
   } catch (err) {
-    // Update EmailLog to FAILED
-    if (emailLogId) {
-      try {
-        await prisma.emailLog.update({
-          where: { id: emailLogId },
-          data: {
-            status: "FAILED",
-            errorMessage: err instanceof Error ? err.message : String(err),
-          },
-        });
-      } catch (logErr) {
-        logger.error({ err: logErr }, "Failed to update EmailLog to FAILED");
-      }
-    }
+    // A FAILED row the retry job replays if it keeps a body; not one the sweep already settled.
+    await row?.write({ status: "FAILED", errorMessage: err instanceof Error ? err.message : String(err) }, "a failed send");
     if (!persistHtmlBody) {
       logger.warn(
         { templateName },

@@ -73,7 +73,7 @@ test("imports a paid booking from a file, shows it paid, and reverses the batch"
   await expect(page).toHaveURL(/\/admin\/(booking-desk\/)?booking-import\/[^/]+$/);
   await expect(page.getByRole("heading", { name: "Import Batch", level: 1 })).toBeVisible();
   const batchRow = page.getByRole("row").filter({ hasText: ref });
-  // "Untouched" means still paid, nothing changed since the import (INV-PAY-163).
+  // "Untouched" means still paid, nothing changed since the import (INV-PAY-164).
   await expect(batchRow).toContainText("Imported, untouched");
 
   const batchUrl = page.url();

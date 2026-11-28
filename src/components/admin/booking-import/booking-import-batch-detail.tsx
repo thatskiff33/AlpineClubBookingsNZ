@@ -42,7 +42,7 @@ const STATE_LABELS: Record<BookingImportReversalRowState, string> = {
  * One import batch (#5005, child C): its totals to compare with the old
  * system's records, every booking with its outcome, and Reverse. Reverse
  * first shows which bookings it would take back and which it keeps, and why
- * (`INV-PAY-163`); it then runs in slices until none remain.
+ * (`INV-PAY-164`); it then runs in slices until none remain.
  */
 export function BookingImportBatchDetail({ batchId, canReverse }: { batchId: string; canReverse: boolean | undefined }) {
   const format = useClubFormat()

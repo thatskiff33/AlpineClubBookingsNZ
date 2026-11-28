@@ -67,9 +67,23 @@ export const XERO_INVOICE_EMAIL_SEND = "SEND";
  */
 export const XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION = "WITHHELD_AT_CREATION";
 
+/**
+ * Xero is not asked to email this invoice, because the booking edit that raised
+ * it has already asked the member, in the booking-changed email, for what the
+ * invoice shows as due (#5288, `INV-PAY-163`). The create raises the invoice at
+ * the booking's whole worth and the account credit is allocated to it by a
+ * later operation, so Xero's own email would show the amount before that credit
+ * - more than the member owes. Not a withhold: nothing the member is owed goes
+ * unsent, so no withheld-email row is written, as none is for an edit's
+ * supplementary invoice, which Xero never emails either. An officer can still
+ * send it from Xero.
+ */
+export const XERO_INVOICE_EMAIL_ASKED_BY_EDIT = "ASKED_BY_EDIT";
+
 export type XeroInvoiceEmailInstruction =
   | typeof XERO_INVOICE_EMAIL_SEND
-  | typeof XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION;
+  | typeof XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION
+  | typeof XERO_INVOICE_EMAIL_ASKED_BY_EDIT;
 
 /**
  * Parse what is stored on the operation row.
@@ -83,7 +97,8 @@ export function readXeroInvoiceEmailInstruction(
   value: unknown,
 ): XeroInvoiceEmailInstruction | null {
   return value === XERO_INVOICE_EMAIL_SEND ||
-    value === XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION
+    value === XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION ||
+    value === XERO_INVOICE_EMAIL_ASKED_BY_EDIT
     ? value
     : null;
 }
@@ -115,4 +130,14 @@ export function xeroInvoiceEmailIsWithheldAtCreation(
   instruction: XeroInvoiceEmailInstruction | null,
 ): boolean {
   return instruction === XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION;
+}
+
+/**
+ * Whether the booking edit that raised this invoice asked the member itself, so
+ * Xero's email is not sent at all ({@link XERO_INVOICE_EMAIL_ASKED_BY_EDIT}).
+ */
+export function xeroInvoiceEmailIsAskedByEdit(
+  instruction: XeroInvoiceEmailInstruction | null,
+): boolean {
+  return instruction === XERO_INVOICE_EMAIL_ASKED_BY_EDIT;
 }

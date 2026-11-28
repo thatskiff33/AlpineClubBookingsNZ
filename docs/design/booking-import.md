@@ -80,7 +80,7 @@ member merge by `booking-import.realdb.test.ts`.
 ## Reversing a batch
 
 `reverseBookingImport` (`src/lib/booking-import/reverse.ts`, child B,
-`INV-PAY-163`) takes back the bookings of a completed batch that nobody has
+`INV-PAY-164`) takes back the bookings of a completed batch that nobody has
 touched since the import; `planBookingImportReversal` shows the same answer
 first, read-only, with reasons for each kept booking and totals per state.
 Both read "untouched" through `importedBookingTouches`: still PAID, the stay
@@ -140,6 +140,6 @@ names or emails.
 - [Architecture](../ARCHITECTURE.md#paid-booking-import-engine)
 - [Capacity](../CAPACITY_MODEL.md#imported-paid-future-bookings-5005)
 - [Payment invariant INV-PAY-161](../invariants/payment-and-settlement.md#inv-pay-161)
-- [Payment invariant INV-PAY-163](../invariants/payment-and-settlement.md#inv-pay-163)
+- [Payment invariant INV-PAY-164](../invariants/payment-and-settlement.md#inv-pay-164)
 - [Capacity invariant INV-CAP-040](../invariants/booking-dates-and-capacity.md#inv-cap-040)
 - [Member-money journal](member-money-ledger.md)

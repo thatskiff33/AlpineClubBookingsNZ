@@ -37,7 +37,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { CreditNote, type Invoice } from "xero-node";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -826,5 +826,24 @@ async function cancellationCreditCents(): Promise<number> {
     });
     expect(await prisma.bookingEvent.count({ where: { bookingId: BOOKING_ID, reason: { contains: "needs checking" } } })).toBe(0);
     await prisma.memberCredit.deleteMany({ where: { id: lot.id } });
+  }, 60_000);
+  // #5289 G: a keep that lowers a stored total is pinned, not just its raises.
+  it("A KEEP LOWERING A FOLD TO $0: $50 refunded on the stored total, recorded nowhere and no note behind it: the keep writes $0 refunded and SUCCEEDED, and logs it at warn", async () => {
+    await bookAt(30_000);
+    await raiseInvoice();
+    await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" } });
+    const logger = (await import("@/lib/logger")).default;
+    const warn = vi.spyOn(logger, "warn");
+    try {
+      // A fold no applied note explains: the settle keeps the stored $300 receipt.
+      await settle(30_000);
+      expect(await figures()).toMatchObject({ payment: { amountCents: 30_000, refundedAmountCents: 0, status: "SUCCEEDED" }, primary: { amountCents: 30_000, status: "SUCCEEDED" } });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentId: PAYMENT_ID, invoiceId: INVOICE_ID, storedRefundedAmountCents: 5_000, keptRefundedAmountCents: 0 }),
+        expect.stringContaining("lowered the payment's refunded total"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   }, 60_000);
 });

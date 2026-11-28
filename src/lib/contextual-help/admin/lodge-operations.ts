@@ -10,7 +10,7 @@ import { getAdminPage } from "@/lib/admin-hubs";
 
 export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
   entry(
-    "/admin/hut-leaders",
+    getAdminPage("hut-leaders").oldPath,
     help(
       "Hut Leaders",
       "This page assigns hut leaders, monitors gaps, and manages kiosk PIN access for lodge operations.",
@@ -57,7 +57,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/lockers",
+    getAdminPage("lockers").oldPath,
     help(
       "Lockers",
       "Lockers manages lodge locker assignments and availability.",
@@ -86,7 +86,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/roster",
+    getAdminPage("roster").oldPath,
     help(
       "Chore Roster",
       "Roster manages lodge day rosters and printable operational lists.",
@@ -110,7 +110,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/chores",
+    getAdminPage("chores").oldPath,
     help(
       "Chores",
       "Chores configures lodge chore lists, rosters, and guest task assignment behavior.",
@@ -139,7 +139,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/lodge",
+    getAdminPage("lodge-kiosk").oldPath,
     help(
       "Lodge Kiosk",
       "Lodge Kiosk settings and tools support arrivals, departures, chores, PIN access, and day-of-lodge operations.",
@@ -163,7 +163,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/work-parties",
+    getAdminPage("work-parties").oldPath,
     help(
       "Work Parties",
       "Work Parties manages volunteer work-party events, attendance, and operational details.",
@@ -192,7 +192,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/calendar",
+    getAdminPage("calendar").oldPath,
     help(
       "Events Calendar",
       "The club events calendar for meetings, working bees, and committee video meetings. Every member sees it; committee members and admins with lodge edit can add, edit, and delete events, while other members are read-only.",
@@ -221,7 +221,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/lodge-instructions",
+    getAdminPage("lodge-instructions").oldPath,
     help(
       "Lodge Instructions",
       "Lodge Instructions edits protected instruction documents for hut leaders and lodge readers.",

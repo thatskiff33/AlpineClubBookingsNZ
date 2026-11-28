@@ -357,7 +357,7 @@ guide.
   [Xero](xero.md), [Book on Behalf](book.md), [Payments](payments.md),
   [Refunds & Credits](refund-requests.md).
 - `INV-PAY-162` in [payment-and-settlement.md](../invariants/payment-and-settlement.md):
-  the opening-credit contract; `INV-PAY-161` and `INV-PAY-163` the paid-bookings
+  the opening-credit contract; `INV-PAY-161` and `INV-PAY-164` the paid-bookings
   import and its reversal.
 - [The paid-bookings import engine](../design/booking-import.md), for
   developers.

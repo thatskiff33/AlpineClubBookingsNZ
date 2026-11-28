@@ -25,12 +25,16 @@ import {
   type AdminAlertRecipientDeliveryOutcome,
 } from "@/lib/email-admin-alert-escalation";
 import { sendEmail } from "./core";
+import { handLostHandoversToTheRetryJob } from "./handover";
+import { isLeftForTheEmailRetryJob } from "./send-outcome";
 import {
   type EmailAttachment,
   isCallerRetriedAlertTemplate,
+  isOwnerRetriedAlertTemplate,
   shouldPersistEmailHtml,
 } from "./internal";
 import {
+  adminAlertIsDeliveredOrQueued,
   type AdminAlertRecipientsResult,
   type UnmuteableAdminAlertOutcome,
 } from "./admin-alert-send-result";
@@ -201,6 +205,8 @@ export async function sendAdminAlertTo({
   // A FAILED row is replayed only when it kept its body (`core.ts`); a
   // sensitive template's does not, and goes to the review queue instead.
   const failedRowIsReplayed = shouldPersistEmailHtml(templateName);
+  // #5298: an owner-retried alert's lost hand-over is released to its owner, not queued.
+  const ownerRetried = isOwnerRetriedAlertTemplate(templateName);
   // #5255: the once-ever claim this alert is sent under, if any; every
   // recipient's row confirms it, and a later alert in the same send gets none.
   const onceEverClaim = takeOnceEverClaim();
@@ -211,6 +217,7 @@ export async function sendAdminAlertTo({
         logged: boolean;
         lostForWantOfARow: boolean;
         claimRefused?: true;
+        handoverLost?: string;
       }
     > => {
       // Whether this copy's EmailLog row was written (`onAttemptLogged`, as
@@ -240,16 +247,17 @@ export async function sendAdminAlertTo({
         // placeholders (#1935); fold the not-sent outcomes into "suppressed".
         // An environment FAULT (not a confirmed non-production copy) leaves a
         // FAILED row the retry cron sends once the installation is corrected,
+        // and a lost hand-over (#5298) a row the stranded-email sweep hands it,
         // but only if the row was written (#5407): without one it is lost.
+        const handoverLost = outcome.status === "handover_lost";
         const replayableFault =
-          outcome.status === "withheld_for_environment" &&
-          outcome.reason !== "environment_non_production" &&
-          failedRowIsReplayed;
+          isLeftForTheEmailRetryJob(outcome) && failedRowIsReplayed && !(handoverLost && ownerRetried);
         return {
           status: outcome.status === "sent" ? "sent" : "suppressed",
           queuedForRetry: replayableFault && logged,
           logged,
           lostForWantOfARow: replayableFault && !logged,
+          ...(handoverLost ? { handoverLost: outcome.emailLogId } : {}),
         };
       } catch (err) {
         if (err instanceof OnceEverClaimRefusedError) {
@@ -295,7 +303,7 @@ export async function sendAdminAlertTo({
   const queuedForRetry = outcomes.filter(
     (outcome) => outcome.status !== "sent" && outcome.queuedForRetry,
   ).length;
-  return {
+  const result: AdminAlertRecipientsResult = {
     deliveryAllowed: true,
     recipients: outcomes.length,
     sent,
@@ -303,6 +311,14 @@ export async function sendAdminAlertTo({
     notDelivered: outcomes.length - sent - queuedForRetry,
     failedBeforeLogged: outcomes.filter((outcome) => outcome.lostForWantOfARow).length,
   };
+  // #5298: an owner-retried alert somebody received, or the retry job holds a
+  // copy of, settles its owner (`adminAlertIsDeliveredOrQueued`, the rule its
+  // claim is kept on), so a copy that lost its hand-over goes to the retry job
+  // now, as in `sendUnmuteableAdminAlert`.
+  if (ownerRetried && adminAlertIsDeliveredOrQueued(result)) {
+    await handLostHandoversToTheRetryJob(outcomes.flatMap((outcome) => outcome.handoverLost ?? []), templateName);
+  }
+  return result;
 }
 
 /**
@@ -446,7 +462,7 @@ export async function sendUnmuteableAdminAlert({
   // #5255: as `sendAdminAlertTo`, the once-ever claim goes to this alert's own rows only.
   const onceEverClaim = takeOnceEverClaim();
   const outcomes = await Promise.all(
-    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome & { claimRefused?: true }> => {
+    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome & { claimRefused?: true; handoverLost?: string }> => {
       try {
         const outcome = await sendEmail({
           to: email,
@@ -465,6 +481,7 @@ export async function sendUnmuteableAdminAlert({
         const heldOnACopy =
           outcome.status === "withheld_for_environment" &&
           outcome.reason === "environment_non_production";
+        if (outcome.status === "handover_lost") return { status: "suppressed", handoverLost: outcome.emailLogId };
         return { status: outcome.status === "sent" || heldOnACopy ? "sent" : "suppressed" };
       } catch (err) {
         if (err instanceof OnceEverClaimRefusedError) {
@@ -482,11 +499,26 @@ export async function sendUnmuteableAdminAlert({
   );
 
   const nobodyReceivedIt = outcomes.every((outcome) => outcome.status !== "sent");
+  // #5298: a lost hand-over left its row, body and all, to the stranded-email
+  // sweep, which re-sends it. Like a copy the cron holds, every copy is kept
+  // and the owner does not send it again. Not an owner-retried alert: the sweep
+  // releases that one to its owner, whose retry is then the only one.
+  const ownerRetried = isOwnerRetriedAlertTemplate(templateName);
+  const lostHandovers = outcomes.flatMap((outcome) => outcome.handoverLost ?? []);
+  const sweepHoldsACopy = shouldPersistEmailHtml(templateName) && !ownerRetried && lostHandovers.length > 0;
   // Before anything else can fail, and before the owner can retry.
   const release =
-    nobodyReceivedIt && isCallerRetriedAlertTemplate(templateName)
+    nobodyReceivedIt && !sweepHoldsACopy && isCallerRetriedAlertTemplate(templateName)
       ? await releaseUnreceivedAlertCopies(attemptLogIds, templateName)
       : null;
+  // An owner-retried alert somebody did receive, or whose copies the cron
+  // holds: its owner sees "sent" or "queued-for-retry" and sends nothing more,
+  // so a copy that lost its hand-over goes to the cron now (#4669's "the
+  // cron's to replay"), before the sweep can release it to an owner that is no
+  // longer retrying.
+  if (ownerRetried && (!nobodyReceivedIt || release === "cron-holds-a-copy")) {
+    await handLostHandoversToTheRetryJob(lostHandovers, templateName);
+  }
 
   // Recipients refused for their once-ever claim are retried, not escalated (#5255).
   const escalatable = outcomes.filter((outcome) => !outcome.claimRefused);
@@ -509,7 +541,7 @@ export async function sendUnmuteableAdminAlert({
     );
   }
   if (!nobodyReceivedIt) return "sent";
-  return release === "cron-holds-a-copy" ? "queued-for-retry" : "undelivered";
+  return release === "cron-holds-a-copy" || sweepHoldsACopy ? "queued-for-retry" : "undelivered";
 }
 
 export async function shouldSendDirectAdminSystemEmail(templateName: string) {

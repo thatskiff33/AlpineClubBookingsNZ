@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { emailTemplateResetSchema } from "@/lib/admin-support-api/messages";
+import { EMAIL_TEMPLATE_RESET_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -9,12 +11,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
-const resetSchema = z.object({
-  templateName: z.string().trim().min(1),
-});
-
 // The save route caps a stored body at 10,000 characters and a subject at 500
-// (src/app/api/admin/email-templates/route.ts), so this is the largest wording
+// (src/lib/admin-support-api/messages.ts), so this is the largest wording
 // a club can have to lose — and, because the audit row is the only copy left
 // after a reset, the length the archive has to keep whole. Audit metadata
 // otherwise clips every string at 1000 characters, which turned a measured
@@ -40,7 +38,7 @@ export async function POST(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = resetSchema.safeParse(body);
+  const parsed = emailTemplateResetSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -115,5 +113,5 @@ export async function POST(request: NextRequest) {
     }),
   );
 
-  return NextResponse.json({ reset: result.count > 0 });
+  return connectionJson(request, { reset: result.count > 0 }, EMAIL_TEMPLATE_RESET_CONNECTION_SHAPE);
 }

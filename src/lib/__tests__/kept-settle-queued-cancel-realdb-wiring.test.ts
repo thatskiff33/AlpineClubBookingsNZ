@@ -27,6 +27,22 @@ describe("the kept settle's queued-cancel real-database proof stays wired into C
     expect(suite).toContain("CASE 2:");
     expect(suite).toContain("CASE 1, SETTLE FIRST:");
     expect(suite).toContain("CASE 1, SYNC FIRST:");
+    // #5289 B, C, G: the outbound completion and link-only races, on the real sync.
+    expect(suite).toContain("LINK-ONLY, SETTLE FIRST:");
+    expect(suite).toContain("OUTBOUND FIRST:");
+    expect(suite).toContain("syncFakeXeroCreditNote");
+  });
+
+  it.each([
+    ["voided-modification-note-recount", "reconcileXeroCreditNote"],
+    ["bank-transfer-floor-corrections", "syncInternetBankingPaymentsForPaidInvoice"],
+    ["card-refund-ledger-never-lowered", "reconcileXeroCreditNote"],
+  ])("imports #5289's %s proof too", (name, writer) => {
+    const harness = readFileSync(resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"), "utf8");
+    expect(harness).toContain(`import "./${name}.realdb.test";`);
+    const suite = readFileSync(resolve(REPO_ROOT, `src/lib/__tests__/${name}.realdb.test.ts`), "utf8");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain(writer);
   });
 
   it("imports the kept settle's failed-later card refund proof too (#4449 review, item 1)", () => {

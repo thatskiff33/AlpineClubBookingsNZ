@@ -26,7 +26,8 @@
  *
  * Stated limits:
  * - A crash during the provider call itself leaves the member's row `QUEUED`,
- *   which nothing replays (the window every inline send has).
+ *   which the stranded-email sweep flags to officers rather than replays
+ *   (`INV-INT-043`, the window every inline send has).
  * - A claim is a stamp, not a lease: a send still running a kind's whole wait
  *   after its claim, or a large clock difference between two app instances,
  *   lets a sweep claim the marker again. The member is still sent one email

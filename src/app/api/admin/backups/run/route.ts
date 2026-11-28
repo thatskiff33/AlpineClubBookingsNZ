@@ -13,6 +13,11 @@ import {
   runManagedBackup,
 } from "@/lib/backup-run";
 import logger from "@/lib/logger";
+import {
+  BACKUP_STARTED_CONNECTION_SHAPE,
+  type BackupStartedAnswer,
+} from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // POST /api/admin/backups/run — "run backup now" (support:edit).
 //
@@ -123,5 +128,6 @@ export async function POST(request: Request) {
       );
     });
 
-  return NextResponse.json({ ok: true, started: true }, { status: 202 });
+  const answer: BackupStartedAnswer = { ok: true, started: true };
+  return connectionJson(request, answer, BACKUP_STARTED_CONNECTION_SHAPE, { status: 202 });
 }

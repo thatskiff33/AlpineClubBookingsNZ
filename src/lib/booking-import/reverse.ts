@@ -1,5 +1,5 @@
 /**
- * Reversing a paid-booking import batch (#5005, child B; `INV-PAY-163`).
+ * Reversing a paid-booking import batch (#5005, child B; `INV-PAY-164`).
  *
  * A batch is reversed booking by booking, and only the bookings nobody has
  * touched since the import are reversed: still PAID, the stay not started, no

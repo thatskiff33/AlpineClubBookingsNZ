@@ -1789,9 +1789,17 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // member key), before its allocation row, so the Internet Banking settle
   // (lock(1) -> lodge -> member -> this row) and the write serialise here.
   // #4279: and by a refund-note repair's completion that adopts its note as the
-  // payment's pointer (`completeAdoptingCanonicalRefundNote`, a retry claim's own
+  // payment's pointer (`completeUnderPaymentRows`, a retry claim's own
   // transaction, no lock(1)), FIRST, before the operation row's guarded claim,
   // the pointer and the links - the create's record order. No new key.
+  // #5289 B: and by the outbound completion of a note's own allocation
+  // (`NOTE_ALLOCATION_ROLE`) on the invoice's one bank-transfer payment, in the
+  // same transaction, both intents' Payment rows one sorted set, before the
+  // claim; its total is decided after the links under the row. No new key.
+  // #5251: and by the inbound sync's write of a modification note's own status
+  // (`writeCreditNoteLinks`, no lock(1)), when the write changes whether the
+  // note counts: the payments its active allocations name, ids sorted, FIRST,
+  // then the note's link rows; each total decided under them. No new key.
   "src/lib/payment-transactions.ts": 1,
   // #4161 / #4192: the nightly link cleanup's refund-note heal takes two
   // lock-only statements: the one `XeroObjectLink` row it is about to re-write
@@ -1854,6 +1862,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // key; the refund and cancel doors only read the row. See
   // docs/CONCURRENCY_AND_LOCKING.md, "A Stripe dispute's record (#4911)".
   "src/lib/stripe-dispute.ts": 1,
+  // #5289 review: the booking repair tool's backfill of a note's own
+  // allocation link locks that link row alone and never switches a retired row
+  // back on; it takes no Payment row, before or after. See
+  // docs/CONCURRENCY_AND_LOCKING.md, "The app's own allocation of a note
+  // decides it too (#5289 B)".
+  "src/lib/xero-booking-repair-passes.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
@@ -2073,8 +2087,11 @@ describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_T
   // #4279 (INV-LOCK-002, INV-LOCK-003): a completion that adopts a refund note
   // as the payment's pointer takes the Payment row before the operation row's
   // claim, adopts only after the claim wins, and writes its links after that.
-  // Only that completion shape takes the row; every other keeps its transaction.
-  it("keeps a refund-note repair's adopting completion on Payment row -> guarded claim -> pointer -> links", () => {
+  // #5289 B: so does a completion recording a note's own allocation, which
+  // decides the invoice's bank-transfer payment's total after its links, under
+  // that row; both intents' rows are one sorted set, taken first. Only those
+  // completion shapes take a Payment row; every other keeps its transaction.
+  it("keeps a Payment-first completion (refund-note adoption, a note's own allocation) on Payment rows -> guarded claim -> pointer -> links -> decision", () => {
     const text = (rel: string) => stripComments(sources.find((source) => source.rel === rel)?.text ?? "");
     const inOrder = (body: string, markers: string[]) => {
       const at = markers.map((marker) => body.indexOf(marker));
@@ -2083,10 +2100,22 @@ describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_T
         expect(at[i], `${markers[i]} must follow ${markers[i - 1]}`).toBeGreaterThan(at[i - 1]);
       }
     };
-    const adoptionModule = text("src/lib/xero-refund-note-adoption.ts");
-    const adopting = adoptionModule.slice(adoptionModule.indexOf("export async function completeAdoptingCanonicalRefundNote<"));
-    inOrder(adopting, ["options?.store || !options?.retryClaim", "db.$transaction(", "lockPaymentForRefundedTotal(tx, adoption.paymentId)", "complete(tx)", "}, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);"]);
-    expect(adopting).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
+    const firstModule = text("src/lib/xero-payment-first-completion.ts");
+    const first = firstModule.slice(firstModule.indexOf("export async function completeUnderPaymentRows<"));
+    inOrder(first, [
+      "adoption && (options?.store || !options?.retryClaim)",
+      "allocation && options?.store",
+      "bankTransferPaymentIdsOfInvoices(allocation.invoiceIds)",
+      ".sort()",
+      "db.$transaction(",
+      "for (const paymentId of paymentIds) await lockPaymentForRefundedTotal(tx, paymentId)",
+      "complete(tx)",
+      "if (linksRecorded())",
+      "decideBankTransferRefundedTotal(tx,",
+      "}, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);",
+      "sendFloorAlerts(",
+    ]);
+    expect(first).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
     const sync = text("src/lib/xero-sync.ts");
     const complete = sync.slice(sync.indexOf("export async function completeXeroSyncOperation("));
     inOrder(complete, [
@@ -2094,9 +2123,50 @@ describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_T
       "if (claimed.count === 0)",
       "adoptCanonicalRefundNote(completion.canonicalRefundNote, tx)",
       "for (const link of completion.extraLinks ?? []) {",
-      "completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)",
+      "noteAllocationIntentOf(completion.extraLinks)",
+      "completeUnderPaymentRows(prisma, { adoption: completion.canonicalRefundNote, allocation }, options, completeWithClient, () => linksRecorded)",
       ": await prisma.$transaction(completeWithClient)",
     ]);
+    // #5289 B: a total is decided only after the links are written, on a won claim or a late success's own record.
+    expect(complete.match(/upsertXeroObjectLinkWithClient\(tx, link\);?\s*\}?\s*linksRecorded = true;/g)).toHaveLength(2);
+  });
+
+  // #5289 B (INV-LOCK-002, INV-LOCK-003): a note's own allocation link
+  // (`NOTE_ALLOCATION_ROLE`) is counted in a bank-transfer payment's refunded
+  // total, so every writer of one takes that payment's row first and decides the
+  // total under it: the inbound sync through `writeCurrentCreditNoteAllocation`,
+  // and every outbound completion through `completeXeroSyncOperation`, which
+  // routes a completion carrying one to `completeUnderPaymentRows`. A new file
+  // naming the role is classified here: a writer must use one of those two.
+  it("keeps every writer of a note's own allocation link on a Payment-first path (#5289 B)", () => {
+    const NOTE_ALLOCATION_ROLE_FILES: Record<string, string> = {
+      "src/lib/xero-note-allocation-link-roles.ts": "defines the role",
+      "src/lib/xero-clearing-allocations.ts": "re-exports it and reads the links (the clearing-note readers)",
+      "src/lib/xero-booking-repair-classify.ts": "reads the links to classify a booking; its backfill actions are written by xero-booking-repair-passes.ts",
+      "src/lib/xero-inbound/linked-refunded-total.ts": "reads the links for the refunded-total decision",
+      "src/lib/xero-inbound/bank-transfer-payment-of-invoice.ts": "reads a note's links for its removal (#5289 A)",
+      "src/lib/xero-inbound/object-links.ts": "derives the inbound role; written only through writeCurrentCreditNoteAllocations",
+      "src/lib/xero-payment-first-completion.ts": "reads a completion's links, by the readers' rule (isClearingAllocationLinkRoleAndAnchor), to take the Payment row first",
+      "src/lib/xero-modification-credit-notes.ts": "writes through completeXeroSyncOperation's extraLinks",
+      "src/lib/xero-booking-repair-passes.ts": "the repair backfill: takes no Payment row, so it reserves a missing link row, locks an existing one and never switches a retired one back on; a bare new row counts nothing",
+      "src/lib/xero-operation-retry.ts": "names the role for a PARTIAL retry's allocation, completed through completeXeroSyncOperation",
+    };
+    const naming = sources
+      .filter(({ rel, text }) => !rel.includes("__tests__") && /NOTE_ALLOCATION_ROLE|"MODIFICATION_CREDIT_NOTE_ALLOCATION"|isClearingAllocationLinkRoleAndAnchor/.test(stripComments(text)))
+      .map(({ rel }) => rel)
+      .sort();
+    expect(naming).toEqual(Object.keys(NOTE_ALLOCATION_ROLE_FILES).sort());
+    // No file writes one directly past the two funnels: the only direct row write is the inbound write's own reservation.
+    for (const { rel, text } of sources) {
+      if (rel.includes("__tests__")) continue;
+      const body = stripComments(text);
+      if (/xeroObjectLink\.(?:create|createMany|upsert|update|updateMany)\([^)]*(?:NOTE_ALLOCATION_ROLE|"MODIFICATION_CREDIT_NOTE_ALLOCATION")/s.test(body)) {
+        throw new Error(`${rel} writes a note's own allocation link directly; route it through writeCurrentCreditNoteAllocation or completeXeroSyncOperation (#5289 B).`);
+      }
+    }
+    const sync = stripComments(sources.find(({ rel }) => rel === "src/lib/xero-sync.ts")?.text ?? "");
+    expect(sync).toContain("const allocation = noteAllocationIntentOf(completion.extraLinks);");
+    expect(sync).toContain("completion.canonicalRefundNote || allocation");
   });
 
   // #4449 (INV-LOCK-002, INV-LOCK-003): the credit-note allocation write is a
@@ -2138,12 +2208,13 @@ describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_T
       "tx.xeroObjectLink.findUnique(",
       "upsertXeroObjectLink(link, { store: tx })",
     ]);
-    // #4449 review: re-read under the lock, the one payment of the invoice re-counted there, the
-    // shared columns step, and a claim on the row as re-read that also moves updatedAt.
+    // #4449 review: re-read under the lock, the one payment of the invoice re-counted there (#5289 C:
+    // by the settle's own rule, on this transaction), the shared columns step, and a claim on the row
+    // as re-read that also moves updatedAt.
     const decide = between("async function decideBankTransferRefundedTotal(", "async function bankTransferPaymentIdsByInvoiceId(");
     inOrder(decide, [
       "tx.payment.findUnique(",
-      "tx.payment.count({ where: { xeroInvoiceId: target.invoiceId } })",
+      "bankTransferPaymentIdsOfInvoices([target.invoiceId], tx)",
       "decideLinkedRefundedTotalCents(tx, [payment])",
       "decideXeroRefundedColumns(tx,",
       "tx.payment.updateMany(",
@@ -2152,15 +2223,18 @@ describe("advisory lock guard (#182 / H1 regression class)", { timeout: CENSUS_T
     expect(decide).toContain("status: payment.status, refundedAmountCents: payment.refundedAmountCents, updatedAt: payment.updatedAt");
     expect(decide).not.toMatch(/tx\.payment\.update\(|sendBankTransferFloorAlert|notifyXeroSyncError/);
     // The floor alerts go out after every write's commit, outside any transaction: additions and removals.
-    const afterTheWrites = ["bankTransferPaymentIdsByInvoiceId(", "writeCurrentCreditNoteAllocation(", "decidedPaymentOf(link, byInvoiceId)", "holdOrCollect(floorAlert, input.heldFloorAlerts, floorAlerts)", "sendFloorAlerts(floorAlerts)"];
-    inOrder(between("export async function writeCurrentCreditNoteAllocations(", "export async function retireUnlistedCreditNoteAllocations("), afterTheWrites);
-    inOrder(text.slice(text.indexOf("export async function retireUnlistedCreditNoteAllocations(")), afterTheWrites);
+    const afterTheWrites = ["writeCurrentCreditNoteAllocation(", "holdOrCollect(floorAlert, input.heldFloorAlerts, floorAlerts)", "sendFloorAlerts(floorAlerts)"];
+    inOrder(between("export async function writeCurrentCreditNoteAllocations(", "export type RetiredAllocations"), ["bankTransferPaymentIdsByInvoiceId(", "writeCurrentCreditNoteAllocation(link, decidedPaymentOf(link, byInvoiceId))", ...afterTheWrites.slice(1)]);
+    // #5289 A, C: a removal (a cancelled reading's included) finds each link's payment by the settle's rule.
+    inOrder(text.slice(text.indexOf("export async function retireUnlistedCreditNoteAllocations(")), ["bankTransferPaymentsOfNoteAllocations(input.creditNoteId)", ...afterTheWrites]);
     // #4449 verify, low 2: the sync holds the writes' and removals' alerts and sends them after its recount, outside any transaction.
     const sync = stripComments(sources.find(({ rel }) => rel === "src/lib/xero-inbound/credit-note.ts")?.text ?? "");
     inOrder(sync, [
       "await withHeldFloorAlerts(async (held) => {",
       "writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts: held.alerts })",
+      "const removal = await retireUnlistedCreditNoteAllocations({",
       "heldFloorAlerts: held.alerts,",
+      "removal.decidedPaymentIds",
       "held.recountedPaymentIds = new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()])",
       "repairRefundedPaymentBusinessState(",
       "return { refundedPaymentRepair, voidedMirrorAuditLinks };",
