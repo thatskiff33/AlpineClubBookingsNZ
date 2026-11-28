@@ -60,8 +60,10 @@ export async function paymentsCountingInvoiceCorrections(
  * how much of it is invoice corrections (`correctionCents`): money no refund
  * moved, so never in the payment's own refund detail, which the bank-transfer
  * floor adds back (`bankTransferFloorCents`). Every other part is either in
- * that detail already (a refund note's or a cash edit note's hand-back, a
- * refund request paid back) or comes off it (a card refund Stripe failed later).
+ * that detail already (a refund note's, an account-credit note's or a cash edit
+ * note's hand-back, a refund request paid back) or comes off it (a card refund
+ * Stripe failed later): `LINKED_TOTAL_PARTS` in
+ * `bank-transfer-floor-corrections.realdb.test.ts` lists them.
  */
 export type LinkedRefundedTotal = { cents: number; correctionCents: number };
 

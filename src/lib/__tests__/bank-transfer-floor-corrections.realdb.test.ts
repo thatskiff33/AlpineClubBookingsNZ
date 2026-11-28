@@ -22,6 +22,13 @@
  * marker before it sends, so a process stopped after the commit still alerts
  * once, from the retried delivery or the inbound cron, never from both.
  *
+ * #5289 review (plan revision 2, D2 narrowed to corrections): THE PARTS OF
+ * THE LINKED TOTAL (`decideLinkedRefundedTotalCents`) and whether the refund
+ * detail (`PaymentTransaction.refundedAmountCents`) already holds each, so the
+ * floor (detail + corrections) omits none of a bank transfer's money
+ * (`LINKED_TOTAL_PARTS` below). The account-credit hand-back is driven through
+ * the real cancel: it is in the detail, so nothing is added for it.
+ *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions,
  * which imports this file so CI reaches it; it cleans its own `race-5289d-`
@@ -53,6 +60,20 @@ const CHECK_OUT = new Date("2028-01-11T00:00:00.000Z");
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 
+/**
+ * Each part of a bank transfer's linked total, the app writer that records
+ * its money, and whether that writer puts it in the refund detail. Only an
+ * invoice correction moved no cash, so only it is added to the detail.
+ */
+const LINKED_TOTAL_PARTS = [
+  { part: "REFUND_CREDIT_NOTE on the payment (a bank refund)", writer: "manual-refund-task-resolution.ts: applyLocalRefundAllocation", inRefundDetail: true },
+  { part: "ACCOUNT_CREDIT_NOTE on the payment (a cancel to account credit)", writer: "booking-cancel.ts: applyLocalRefundAllocation", inRefundDetail: true },
+  { part: "a modification note that moved cash (an edit's hand-back)", writer: "manual-refund-task-resolution.ts: applyLocalRefundAllocation", inRefundDetail: true },
+  { part: "a refund request paid back", writer: "manual-refund-task-resolution.ts: applyLocalRefundAllocation", inRefundDetail: true },
+  { part: "an invoice correction counted against the receipt", writer: "none: no cash moved", inRefundDetail: false },
+  { part: "a failed-later card refund taken off", writer: "card payments only", inRefundDetail: null },
+] as const;
+
 (RUN ? describe : describe.skip)(
   "the bank-transfer floor adds back the corrections the links count - real PostgreSQL (#5289 D, INV-ADDPAY-021)",
   { timeout: 60_000 },
@@ -80,12 +101,15 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
       await clean();
+      await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
       await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
       await prisma.member.create({
         data: { id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Floor", lastName: "Corrections", ageTier: "ADULT" },
       });
       await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 5289d Lodge", slug: P } });
+      // Everything back, no fee: a cancel's credit is the payment's whole net.
+      await prisma.cancellationPolicy.create({ data: { lodgeId: LODGE_ID, daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 0 } });
     }, 60_000);
 
     beforeEach(async () => {
@@ -107,6 +131,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       if (!prisma) return;
       vi.restoreAllMocks();
       await clean();
+      await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
       await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
     });
@@ -190,6 +215,41 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         updatedDateUTC: new Date("2026-06-30T12:00:00.000Z"), allocations: [{ invoice: { invoiceID: INVOICE_ID }, amount: CORRECTION_CENTS / 100 }], payments: [],
       });
     }
+
+    it("THE PARTS OF THE LINKED TOTAL: only an invoice correction is outside the refund detail, so the floor adds only corrections", () => {
+      expect(LINKED_TOTAL_PARTS.filter((entry) => entry.inRefundDetail === false).map((entry) => entry.part)).toEqual([
+        "an invoice correction counted against the receipt",
+      ]);
+      // Every part a bank transfer's cash moves through is recorded by the one local allocation.
+      for (const entry of LINKED_TOTAL_PARTS.filter((candidate) => candidate.inRefundDetail === true)) {
+        expect(entry.writer).toMatch(/applyLocalRefundAllocation$/);
+      }
+    });
+
+    it("ACCOUNT CREDIT IN THE DETAIL: a cancel to account credit on a bank transfer puts its credit in the refund detail, so with its note not yet linked the note sync neither lowers the total nor alerts", async () => {
+      await seed();
+      const detail = async () =>
+        (await prisma.paymentTransaction.findMany({ where: { paymentId: PAYMENT_ID }, select: { refundedAmountCents: true } })).reduce((sum, row) => sum + row.refundedAmountCents, 0);
+      expect(await detail()).toBe(BANK_REFUND_CENTS);
+
+      const bookingCancel = await import("@/lib/booking-cancel");
+      // A bank transfer's cancel always credits the member's account.
+      const result = await bookingCancel.cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+      expect(result.status).toBe(200);
+      const credited = (await prisma.memberCredit.findMany({ where: { memberId: MEMBER_ID, sourceBookingId: BOOKING_ID, type: "CANCELLATION_REFUND" }, select: { amountCents: true } }))
+        .reduce((sum, credit) => sum + credit.amountCents, 0);
+      // The net, $500 less the $300 refunded, all credited; the cancel then closes the receipt, so its detail
+      // holds the bank refund, the credit and the folded-in correction: the whole $500, as the stored total.
+      expect(credited).toBe(50_000 - CORRECTION_CENTS - BANK_REFUND_CENTS);
+      expect(await detail()).toBe(50_000);
+      expect(await refunded()).toBe(CORRECTION_CENTS + BANK_REFUND_CENTS + credited);
+      expect(await prisma.xeroObjectLink.count({ where: { localModel: "Payment", localId: PAYMENT_ID, role: "ACCOUNT_CREDIT_NOTE" } })).toBe(0);
+
+      // The links count the $100 correction alone; the floor (detail plus corrections, at most stored) keeps $500.
+      await syncCorrection();
+      expect(await refunded()).toBe(50_000);
+      expect(floorAlerts).toEqual([]);
+    });
 
     it("MUTATION (D2 floor): the note sync's allocation write and recount leave $300, and send no alert while the refund note is queued", async () => {
       await seed();
