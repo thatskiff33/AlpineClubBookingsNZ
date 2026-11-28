@@ -45,10 +45,6 @@ import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { valuedStrandNightPrices } from "@/lib/edit-night-valuation";
 import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
-import {
-  assertNoPendingEditFinancialReview,
-  EditFinancialReviewPendingError,
-} from "@/lib/edit-financial-review";
 import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import { editRefundBankTransferPayee, raiseEditRefundHandBackIfOwed } from "@/lib/edit-refund-hand-back";
 import { fullReductionReturnRoute } from "@/lib/booking-guest-acceptance-return-route";
@@ -112,8 +108,7 @@ import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-c
  * - a member could not edit it for a stay yet to start (`getBookingEditPolicy`
  *   in "future" mode: DRAFT, PENDING, PAYMENT_PENDING, CONFIRMED or PAID, check-in
  *   after today — so never AWAITING_REVIEW, `INV-MOD-013`, a waitlist status or
- *   a stay under way), it is quote-priced, or a financial review raised before
- *   #4317 is still open;
+ *   a stay under way), or it is quote-priced;
  * - the re-price would RAISE the price of a booking whose price is settled in
  *   any form — captured cash, paid with credit or at $0, or invoiced: collecting
  *   more needs an ask only the payer can answer, which an acceptance has no door
@@ -130,7 +125,6 @@ export type GuestAcceptanceRepriceSkip =
   | "NO_PROMOTION"
   | "BOOKING_STATUS"
   | "QUOTE_PRICED"
-  | "UNDER_FINANCIAL_REVIEW"
   | "INCREASE_NEEDS_COLLECTION"
   | "REDUCTION_NOT_FULLY_RETURNABLE";
 
@@ -225,14 +219,6 @@ export async function repriceBookingAfterGuestAcceptance(
     return { repriced: false, reason: "BOOKING_STATUS" };
   }
   if (await isQuotePricedBooking(tx, bookingId)) return { repriced: false, reason: "QUOTE_PRICED" };
-  try {
-    await assertNoPendingEditFinancialReview({ bookingId, moneyAffecting: true, store: tx });
-  } catch (error) {
-    if (error instanceof EditFinancialReviewPendingError) {
-      return { repriced: false, reason: "UNDER_FINANCIAL_REVIEW" };
-    }
-    throw error;
-  }
   // #4317 (`INV-MOD-028`): every guest's nights are valued from what is
   // stored, so the promotion is re-decided over figures that add up to each
   // guest's stored total. No booking is skipped for want of exact rows.
@@ -675,9 +661,6 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       // account credit above (D-3813-5); #3809's give-back never runs here.
       appliedCreditGivenBackCents: 0,
       promoCoverageNote: reprice.promoCoverageNote,
-      // The re-price is applied only where its money is decided in full, and
-      // a booking under an open financial review is never re-priced.
-      financialReviewPending: false,
       // D-3813-6: an internet-banking refund is the club's to send.
       refundByBankTransfer: reprice.bankTransferRefundPayee, // #3949: the member, or the group organiser
       refundDestination: refund.refundDestination,

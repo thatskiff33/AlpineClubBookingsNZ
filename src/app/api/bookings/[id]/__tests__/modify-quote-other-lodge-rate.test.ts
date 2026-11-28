@@ -54,10 +54,6 @@ vi.mock("@/lib/admin-permissions", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    // #3032: the preview half of the pending-review fence reads this. Empty by
-    // default - no financial review is open - so this suite asserts exactly what
-    // it asserted before.
-    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     booking: { findUnique: h.bookingFindUnique },
     // `findFirst` (triyder/AlpineClubBookingsNZ#58): a newly chosen lodge must also be visible.
     otherLodge: { findUnique: h.otherLodgeFindUnique, findFirst: h.otherLodgeFindUnique },

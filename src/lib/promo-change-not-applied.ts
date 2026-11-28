@@ -35,14 +35,13 @@
  * place to change, reviewed and shipped like any other change; what it does not
  * get is an admin screen with a text box.
  *
- * That is deliberate, and it is what its two siblings do. `promo-cap-coverage.ts`
- * (#2390) and `booking-financial-review-copy.ts` (#3033) are both plain modules
- * composing sentences onto these same screens and this same email, and neither
- * is admin-editable. Making this one the exception would put three sentences
- * that appear in the same paragraph under two different editing models, which is
- * a worse inconsistency than the one it removes: an officer softening this
- * sentence in an admin screen would find the two beside it unchanged and
- * unreachable.
+ * That is deliberate, and it is what its sibling does. `promo-cap-coverage.ts`
+ * (#2390) is a plain module composing sentences onto these same screens and
+ * this same email, and is not admin-editable. Making this one the exception
+ * would put sentences that appear in the same paragraph under two different
+ * editing models, which is a worse inconsistency than the one it removes: an
+ * officer softening this sentence in an admin screen would find the one beside
+ * it unchanged and unreachable.
  *
  * The mechanism it is NOT is `BOOKING_MESSAGE_KEYS`, the admin-editable
  * booking-message registry. Those are rendered by a screen that fetches message
@@ -232,8 +231,8 @@ function closingOf(phase: PromoChangePhase): string {
 /**
  * The one sentence-set every surface uses.
  *
- * Composed from four clauses rather than frozen as one paragraph, for the reason
- * `booking-financial-review-copy.ts` gives: the surfaces place it differently
+ * Composed from four clauses rather than frozen as one paragraph, because the
+ * surfaces place it differently
  * and one of them (the panel) puts a heading above it.
  */
 export function promoChangeNotAppliedMessage(input: {

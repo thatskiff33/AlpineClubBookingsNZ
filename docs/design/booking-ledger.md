@@ -359,9 +359,9 @@ The planner is `booking-ledger-cancellation-posting.ts`, the writer calls
 **The review closure's re-price and the admin price rebase are one event.**
 `rebaseBookingPriceFromStrands` has exactly one caller, the closure of an
 `EDIT_FINANCIAL_REVIEW`, so the two rows below post once. Its before is the
-ledger's own live lines — an open review fences every edit door
-(`INV-PAY-066`), and the one door it does not fence, the admin date shift,
-posts its own lines in step — and the sum
+ledger's own live lines — an open review fenced every edit door until #4344
+wave C2 (`INV-PAY-066`), and the one door it did not fence, the admin date
+shift, posts its own lines in step — and the sum
 check (the lines must equal the re-base's own movement of the final price)
 proves the ledger was in step rather than assuming it. The completion takes
 `lock(1)` as its first lock for this (`docs/CONCURRENCY_AND_LOCKING.md`).

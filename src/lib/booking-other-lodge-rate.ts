@@ -97,8 +97,7 @@ export const OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE =
 /**
  * The status the whole-request refusal above answers with, in one place.
  *
- * A 400 rather than the 409 `EditFinancialReviewPendingError` uses: this is a
- * request two of whose parts cannot be combined, not a review already open.
+ * A 400: this is a request two of whose parts cannot be combined.
  * The class below binds the message to it, so a save `throw`s one and a
  * preview reads `.message`/`.status` off one. (#4317 retired the second
  * refusal that shared it — an election on an edit that parked its money —

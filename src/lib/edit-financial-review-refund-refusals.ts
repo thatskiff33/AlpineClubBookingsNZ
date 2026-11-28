@@ -59,9 +59,7 @@ export const REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE =
  * The wording below therefore asks for the note to record the hand-back, and the
  * DISMISSED definition in `manual-refund-task-resolution.ts` and `INV-PAY-051` is
  * stated to match. Leaving the task OPEN instead would be the dishonest option:
- * it would hold a money question that has already been answered, and the
- * pending-review fence would keep refusing the member's edits for as long as it
- * stayed there.
+ * it would hold a money question that has already been answered.
  */
 export const REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE =
   "The booking change behind this review has already issued account credit, so a second credit cannot be recorded against it. Hand the amount back another way, then dismiss this task with a note recording what you paid and how - the note is the record that the money was settled outside the system.";

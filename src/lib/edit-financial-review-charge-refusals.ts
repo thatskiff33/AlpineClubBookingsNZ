@@ -10,8 +10,7 @@
  * across that boundary, which is the usual sign that the strings are their own
  * thing. Deliberately dependency-free - no `server-only`, no Prisma, no provider
  * client - so a surface that needs to show one of these before the click can
- * import it without dragging the charge machinery in behind it, exactly as
- * `booking-financial-review-copy.ts` is arranged for the member's side.
+ * import it without dragging the charge machinery in behind it.
  */
 
 /**

@@ -245,9 +245,6 @@ Things worth knowing:
   in-progress booking prices its remaining nights through a different path and
   the change would silently settle nothing. Contact the office for a stay
   already under way.
-- **Not while an older change is still under review.** A booking with a review
-  still open in **Refunds & Adjustments** refuses any price change, this tick
-  included, until that review is settled.
 - **It is an officer decision, and it is audited.** Members never see the
   control on their own booking.
 

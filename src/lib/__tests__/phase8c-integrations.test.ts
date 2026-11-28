@@ -372,7 +372,6 @@ describe("EML-01: bookingModifiedTemplate", () => {
       additionalAmountCents: 10000,
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
-      financialReviewPending: false,
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -408,7 +407,6 @@ describe("EML-01: bookingModifiedTemplate", () => {
       additionalAmountCents: 10000,
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
-      financialReviewPending: false,
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -443,7 +441,6 @@ describe("EML-01: bookingModifiedTemplate", () => {
       additionalAmountCents: 0,
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
-      financialReviewPending: false,
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -476,7 +473,6 @@ describe("EML-01: bookingModifiedTemplate", () => {
       additionalAmountCents: 0,
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
-      financialReviewPending: false,
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,
@@ -509,7 +505,6 @@ describe("EML-01: bookingModifiedTemplate", () => {
       additionalAmountCents: 0,
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
-      financialReviewPending: false,
       refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
       unpaidAskCancelled: false,

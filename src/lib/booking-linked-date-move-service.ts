@@ -649,9 +649,9 @@ export async function applyLinkedDateMove(
   // Stripe charge for its increase, no recovery row (that enqueue lives inside the
   // thunk's own catch), no Xero leg, no audit row and no member email.
   //
-  // The throw sites are ordinary reads — the member row for the email, the
-  // open-financial-review check — and pool pressure straight after a long doubled
-  // transaction is exactly when they fail. `booking-exception-execution.ts` is the
+  // The throw sites are ordinary reads — the member row for the email — and
+  // pool pressure straight after a long doubled transaction is exactly when
+  // they fail. `booking-exception-execution.ts` is the
   // other caller that owns a commit and it contains its post-commit work for the
   // same stated reason; this follows it.
   const followUpErrors: unknown[] = [];

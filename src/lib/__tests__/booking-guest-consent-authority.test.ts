@@ -407,9 +407,6 @@ function makeTx(
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    // #3032: the pending-review fence reads this under the booking-edit locks.
-    // Empty by default - no financial review is open - so every pre-#3032 test
-    // asserts exactly what it asserted before.
     // #3032: `findUnique` and `create` are the raise's find-then-create pair.
     // `findUnique` resolving null means "this occurrence is not on file", so a
     // parked removal takes the create branch; a test that wants a REPLAY points
@@ -892,7 +889,6 @@ describe("a removal from a booking whose rows do not reconcile is priced from st
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
     // The money is priced: $240 -> $120, a $120 reduction, and nothing parks.
     expect(result.priceDiffCents).toBe(-12000);
-    expect(result.financialReviewPending).toBe(false);
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
     const written = tx.booking.update.mock.calls[0][0].data;
     expect(written.totalPriceCents).toBe(12000);
@@ -932,7 +928,6 @@ describe("a removal from a booking whose rows do not reconcile is priced from st
       where: { id: TARGET_GUEST },
     });
     expect(result.priceDiffCents).toBe(-12000);
-    expect(result.financialReviewPending).toBe(false);
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
   });
 
@@ -962,7 +957,6 @@ describe("a removal from a booking whose rows do not reconcile is priced from st
     });
 
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
-    expect(result.financialReviewPending).toBe(false);
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
     expect(result.priceDiffCents).toBe(-12000);
     expect(tx.booking.update.mock.calls[0][0].data.totalPriceCents).toBe(12000);
@@ -1192,17 +1186,13 @@ describe("the self-removal window is judged on the day the caller supplies (#312
 });
 
 /**
- * #3032 (epic #2797): the pending-review fence on the removal path, and the one
- * exemption that keeps owner decision D-14 true.
- *
- * D-14 says a member who never consented must ALWAYS be able to come off a
- * booking. The fence is what stops a second money-affecting edit compounding an
- * amount nobody has priced yet — so without the exemption it would trap exactly
- * the people D-14 exists to free, for as long as an admin left the review open.
- * With it, the removal proceeds and #3032 parks its money as a second review
- * task rather than inventing a figure or silently skipping one.
+ * #4344 wave C2: an edit review raised before #4317 that is still OPEN no longer
+ * holds a removal up. The pending-review fence refused every removal but a
+ * consent one (owner decision D-14) while such a review was open; it is retired,
+ * so every case below arranges an OPEN row where it read and expects the
+ * removal to go through, priced from stored data and raising nothing.
  */
-describe("#3032 pending financial review fences a removal, except a consent one", () => {
+describe("an old open edit review does not hold a removal up (#4344 wave C2)", () => {
   const openReview = {
     id: "task-open",
     occurrenceKey: "edit-financial-review:v1:abc",
@@ -1211,30 +1201,31 @@ describe("#3032 pending financial review fences a removal, except a consent one"
     reviewContext: null,
   };
 
-  it("refuses an ordinary owner removal while the booking's money is under review", async () => {
+  it("takes the guest off for the owner, priced, while the review is open", async () => {
     const tx = makeTx(makeBooking({ targetConsent: null }));
     tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
 
-    await expect(
-      remove(tx, { guestId: TARGET_GUEST, actorMemberId: OWNER }),
-    ).rejects.toMatchObject({ status: 409 });
+    const result = await remove(tx, { guestId: TARGET_GUEST, actorMemberId: OWNER });
 
-    // Refused BEFORE any write: the booking is exactly as it was.
-    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
-    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(result.priceDiffCents).toBe(-12000);
+    expect(tx.bookingGuest.delete).toHaveBeenCalled();
+    expect(tx.bookingModification.create).toHaveBeenCalled();
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
   });
 
-  it("refuses an admin removal on the same terms — the fence is about the money, not the actor", async () => {
+  it("takes the guest off for an admin on the same terms", async () => {
     const tx = makeTx(makeBooking({ targetConsent: null }));
     tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
 
-    await expect(
-      remove(tx, {
-        guestId: TARGET_GUEST,
-        actorMemberId: ADMIN,
-        actorRole: "ADMIN",
-      }),
-    ).rejects.toMatchObject({ status: 409 });
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: ADMIN,
+      actorRole: "ADMIN",
+    });
+
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(tx.bookingModification.create).toHaveBeenCalled();
   });
 
   it("D-14: a CONSENT_EXPIRY removal still comes off, with the review open", async () => {
@@ -1247,11 +1238,9 @@ describe("#3032 pending financial review fences a removal, except a consent one"
       consentAuthority: authority("CONSENT_EXPIRY"),
     });
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
-    // Priced (#4317), and it raises nothing; the earlier review it passed is
-    // still open, which is what the member's email says.
+    // Priced (#4317), and it raises nothing.
     expect(result.priceDiffCents).toBe(-12000);
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
-    expect(result.financialReviewPending).toBe(true);
   });
 
   it("H1: an expiry with the review open credits only the departing guest, and the frozen gap stays for the review", async () => {
@@ -1279,7 +1268,6 @@ describe("#3032 pending financial review fences a removal, except a consent one"
     const written = tx.booking.update.mock.calls[0][0].data;
     expect(written.totalPriceCents).toBe(24000);
     expect(written.finalPriceCents).toBe(24000);
-    expect(result.financialReviewPending).toBe(true);
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
   });
 
@@ -1295,29 +1283,13 @@ describe("#3032 pending financial review fences a removal, except a consent one"
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
   });
 
-  it("CONTROL: the same ordinary removal succeeds when no review is open", async () => {
-    // Without this the four assertions above would still pass against a fence
-    // that refused every removal, or one that refused none.
-    const tx = makeTx(makeBooking({ targetConsent: null }));
-    tx.manualRefundTask.findFirst.mockResolvedValue(null);
-
-    const result = await remove(tx, {
-      guestId: TARGET_GUEST,
-      actorMemberId: OWNER,
-    });
-    expect(result.removedGuest.id).toBe(TARGET_GUEST);
-    expect(tx.manualRefundTask.findFirst).toHaveBeenCalledTimes(1);
-  });
-
-  it("a stranger still gets 403, not a 409 telling them the club is reviewing this booking's money", async () => {
+  it("a stranger still gets 403", async () => {
     const tx = makeTx(makeBooking({ targetConsent: null }));
     tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
 
     await expect(
       remove(tx, { guestId: TARGET_GUEST, actorMemberId: "m-stranger" }),
     ).rejects.toMatchObject({ status: 403 });
-    // And the fence never even ran: it sits below the authorisation checks, so a
-    // caller with no business here learns nothing about the booking's finances.
-    expect(tx.manualRefundTask.findFirst).not.toHaveBeenCalled();
+    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
   });
 });

@@ -44,7 +44,6 @@ export function BookingAdminToolsSection({
   const { savedCard } = payment;
   const {
     providerMismatches,
-    financialReviewWarnings,
     withheldEmails,
     withheldEmailGroups,
     noEmailsState,
@@ -90,7 +89,6 @@ export function BookingAdminToolsSection({
           hasSavedPaymentMethod={savedCard !== null}
           savedCardChargeCents={savedCardChargeCents(booking)}
           providerMismatches={providerMismatches}
-          financialReviewWarnings={financialReviewWarnings}
           features={modules}
           currentWorkParty={
             booking.promoRedemptions.find((row) => row.promoCode.workPartyEvent)?.promoCode.workPartyEvent ?? null

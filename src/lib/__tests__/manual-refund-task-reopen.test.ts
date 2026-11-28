@@ -380,13 +380,10 @@ describe("reopening a dismissed money task (#3498 D2)", () => {
 describe("the global settlement key the reopen takes (#3498 fix round, C1)", () => {
   /*
     The failure this is about is NOT two officers pressing at once - the
-    status-fenced claim already answers that one. It is a money-affecting EDIT
-    that read `assertNoPendingEditFinancialReview` while the task was
-    `DISMISSED`, proceeded, and settled a credit against its own
-    `BookingModification` while this transaction was putting the task back on
-    the queue. `DISMISSED -> OPEN` tightens that fence RETROACTIVELY, which is
-    the one direction the closure path it mirrors never moves it - so the
-    closure's documented reason for holding no advisory key does not transfer.
+    status-fenced claim already answers that one. `DISMISSED -> OPEN` puts a
+    settled money question back in the global settlement cohort, so it has to
+    serialise with cancel, capture and refund. (It once also re-armed the
+    pending-review fence; #4344 wave C2 retired that fence.)
 
     The lock has to come BEFORE the read as well as before the write: a reopen
     that read the row first and then queued behind the edit would decide on a

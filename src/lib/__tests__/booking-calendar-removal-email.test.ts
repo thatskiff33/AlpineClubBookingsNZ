@@ -159,7 +159,6 @@ describe("booking-modified", () => {
     addedGuests: [],
     refundAmountCents: 0,
     additionalAmountCents: 0,
-    financialReviewPending: false,
     refundByBankTransfer: null,
     appliedCreditGivenBackCents: 0,
     unpaidAskCancelled: false,

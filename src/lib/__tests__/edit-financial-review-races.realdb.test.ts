@@ -1096,10 +1096,9 @@ let observerClient: PrismaClient;
      * only ever see an OPEN row or none at all: the raise runs inside the
      * caller's transaction, so a rolled-back attempt takes its task with it, and
      * an attempt that committed is a finished edit nobody retries. A TERMINAL
-     * row means an officer has answered that question and the pending-review
-     * fence — `pg_advisory_xact_lock(1)` then
-     * `assertNoPendingEditFinancialReview`, on every money-affecting door — has
-     * since let a FURTHER edit through. `findFreeOccurrenceSlot` argues it in
+     * row means an officer has answered that question and a FURTHER edit came
+     * through afterwards (the pending-review fence that guaranteed the order
+     * until #4344 wave C2 retired it). `findFreeOccurrenceSlot` argues it in
      * full; these two cases are it, against a real server.
      *
      * An earlier single case asserted the pre-#3166 rule ("a replay finds the

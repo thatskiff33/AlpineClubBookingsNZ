@@ -9,15 +9,11 @@ import { getWithheldBookingEmailSummary } from "@/lib/booking-email-suppression"
 import { loadBookingFreshCopyOptions } from "@/lib/booking-fresh-email-copy";
 import { bookingHasLiveWaitlistOffer } from "@/lib/booking-no-emails-service";
 import { findUnresolvedWaitlistStrandReport, hasStrandedWaitlistConfirmShape } from "@/lib/waitlist-return-contract";
-import {
-  getBookingFinancialReviewWarnings,
-  getBookingProviderMismatches,
-} from "@/lib/booking-provider-mismatches";
+import { getBookingProviderMismatches } from "@/lib/booking-provider-mismatches";
 import type { BookingDetailRecord } from "./load-booking-detail";
 import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
-import type { BookingDetailHistory } from "./booking-detail-history";
 
 /**
  * WHAT THE ADMIN TOOLS CARD IS TOLD (#2958): every admin-gated read the booking
@@ -29,9 +25,6 @@ import type { BookingDetailHistory } from "./booking-detail-history";
  * member's page still runs none of these queries. Advisory only: every route
  * behind the card re-derives its own conditions under its own locks.
  *
- * `financialReviewPending` is the flag `booking-detail-history.ts` read once
- * (#3033) and is reused here, never re-queried.
- *
  * Moved verbatim from `page.tsx`, comments included.
  */
 export async function loadBookingDetailAdminTools({
@@ -39,30 +32,17 @@ export async function loadBookingDetailAdminTools({
   modules,
   viewer,
   access,
-  history,
 }: {
   booking: BookingDetailRecord;
   modules: FeatureFlags;
   viewer: BookingDetailViewer;
   access: BookingDetailEditAccess;
-  history: BookingDetailHistory;
 }) {
   const { isAdmin, canSeeAdminTools } = viewer;
   const { isDeleted } = access;
-  const { financialReviewPending } = history;
   const providerMismatches = isAdmin
     ? await getBookingProviderMismatches(booking.id)
     : [];
-
-  /*
-    #3033: the admin-side warning row. Derived from the flag already read above
-    rather than re-queried, so the member's banner and the admin's warning can
-    never disagree about the same booking on the same page load.
-  */
-  const financialReviewWarnings =
-    isAdmin && financialReviewPending
-      ? await getBookingFinancialReviewWarnings(booking.id)
-      : [];
 
   /*
     #2259 (owner decision D10) — the "No emails" switch and the persistent
@@ -186,7 +166,6 @@ export async function loadBookingDetailAdminTools({
   return {
     stripeDisputes,
     providerMismatches,
-    financialReviewWarnings,
     withheldEmails,
     withheldEmailGroups,
     noEmailsState,

@@ -24,7 +24,6 @@ import { useClubFormat } from "@/components/club-format-provider";
 import {
   CardPaymentUnavailableNotice,
   CheckingPaymentCard,
-  FinancialReviewNotice,
   formatLinkExpiry,
   internetBankingHeading,
   NarrativeCard,
@@ -40,16 +39,6 @@ import { takeStripeReturn, type CardConfirmation } from "@/lib/stripe-return";
 import { RedirectFailedNotice } from "@/components/stripe/redirect-failed-notice";
 import { FreshLinkCard } from "./fresh-link-card";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
-/*
-  #3194 (epic #2797): the sentences a member reads when their saved change is
-  still being priced. Imported, never restated — the booking-detail banner
-  composes the same ones, and two surfaces holding their own copy of a claim
-  about a member's money is the defect this closes (`INV-SSOT`).
-*/
-import {
-  financialReviewNote,
-  financialReviewNoteBesideAnAmount,
-} from "@/lib/booking-financial-review-copy";
 
 export default function PayByLinkPage() {
   const format = useClubFormat();
@@ -170,12 +159,7 @@ export default function PayByLinkPage() {
     if (outcome.kind === "paid") {
       const settled = outcome.context;
       if (settled) setContext(settled);
-      // #3194: a paid booking under review reads as its review state, and the
-      // server's narrative (the `!context.payable` branch) confirms the payment
-      // with the review beside it. Composing a card here would drop the amount.
-      const paidUnderReview =
-        settled?.financialReviewPending === true && !settled.payable && !settled.canRequestFreshLink;
-      if (!paidUnderReview) setPaymentComplete(true);
+      setPaymentComplete(true);
     } else if (outcome.kind === "fresh") {
       // The refreshed context: "Amount due" and the form match the new intent.
       if (outcome.context) setContext(outcome.context);
@@ -221,15 +205,6 @@ export default function PayByLinkPage() {
 
   if (!context) return null;
 
-  /*
-    #3194: the club is still working out an amount on this booking. Every branch
-    below either renders `context.narrative` — which the server has already
-    composed with the review sentences in it — or, where the branch renders a
-    card of its own instead, shows the notice explicitly. There is no branch on
-    this page that can reach a member without telling them.
-  */
-  const financialReviewPending = context.financialReviewPending === true;
-
   // #4300 / #4955: what a payment just made did, when the server says it is not
   // (yet) settled. Never answered with another payment.
   const recoveryNotice = (
@@ -261,45 +236,14 @@ export default function PayByLinkPage() {
           // purpose — those are about the club, not about a stay.
           nextStep: `Your booking with ${context.lodgeName ?? club.lodgeName} is confirmed. We look forward to seeing you.`,
         };
-    return (
-      <NarrativeCard narrative={narrative} tone="success">
-        {/*
-          #3194: the member has just paid IN THIS SESSION, so the context on
-          screen predates the payment and the card above is composed here rather
-          than by the server. A booking under review reaches this branch — a
-          CONFIRMED-unpaid booking can carry an open review and still be paid —
-          and without this notice the last thing it would say is "your booking is
-          confirmed, we look forward to seeing you", which is the same false
-          reassurance in a different sentence.
-
-          `moneyAlreadyMoved: false` is a fact, not a default: what moved here is
-          the booking's OWN price, which the member just paid. Nothing has been
-          refunded or charged FOR THE CHANGE, and a parked review settles nothing
-          by construction.
-
-          Not shown when the server supplied the narrative (`state === "paid"`),
-          because the server composes the review sentences into it already and
-          this would say them twice. That pairing does not arise from this
-          repository's own server at all — a reviewed booking resolves to
-          `financial_review_pending`, never to `paid` — but nothing validates
-          this payload on the way in, so the guard stays rather than relying on
-          that.
-        */}
-        {!serverNarrative && financialReviewPending ? (
-          <FinancialReviewNotice
-            note={financialReviewNote({ moneyAlreadyMoved: false })}
-          />
-        ) : null}
-      </NarrativeCard>
-    );
+    return <NarrativeCard narrative={narrative} tone="success" />;
   }
 
   /*
     #4955: a redirect return reads a fresh context, which may no longer be
     payable - the link expired while the payer was at their bank, say. The
     answer about the payment just made still comes first: not "email me a new
-    link", and never the pay buttons. #3194: a booking under review still says
-    so, as on every branch.
+    link", and never the pay buttons.
   */
   if (paymentRecovery && (context.canRequestFreshLink || !context.payable)) {
     return (
@@ -311,45 +255,18 @@ export default function PayByLinkPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           {recoveryNotice}
-          {financialReviewPending ? (
-            <FinancialReviewNotice note={financialReviewNote({ moneyAlreadyMoved: false })} />
-          ) : null}
         </CardContent>
       </Card>
     );
   }
 
-  /*
-    #3194: `canRequestFreshLink`, not `state === "expired_payable"`. On a booking
-    under review the state is the WORDING state (`financial_review_pending`)
-    while the link is still expired-but-payable, and the member still needs the
-    button that emails them a new one. This field is the link's own fact and is
-    identical to the old test on every booking that is not under review. The
-    narrative rendered here is the server's, which already carries the review
-    sentences.
-  */
   if (context.canRequestFreshLink) {
     return <FreshLinkCard token={token} narrative={context.narrative} />;
   }
 
-  /*
-    #3194: `!context.payable`, not `state !== "payable"`, for the same reason as
-    the branch above — `payable` is present exactly when this link can still take
-    money, which a review does not change. Identical to the old test on every
-    booking that is not under review.
-  */
   if (!context.payable) {
-    // bumped / cancelled / declined / under_review / financial_review_pending /
-    // unknown — a clear, specific message with a concrete next step, and on a
-    // reviewed booking the narrative the server composed carries the review
-    // sentences, so no separate notice is needed here.
-    //
-    // A PAID booking under review lands HERE rather than in the paid branch
-    // above, because its wording state is the review's. That is the path a
-    // member takes when they paid by internet banking, or when a redirect-based
-    // card method returns them to this URL and the page re-fetches — so the
-    // narrative it renders has to confirm the payment as well as disclose the
-    // review, and since #3194 it does (`buildPaidWithFinancialReviewNarrative`).
+    // bumped / cancelled / declined / under_review / unknown — a clear,
+    // specific message with a concrete next step.
     const tone = toneForState(context.state);
     const showRebook =
       context.state === "bumped" ||
@@ -398,34 +315,6 @@ export default function PayByLinkPage() {
             {formatLinkExpiry(payable.expiresAt, clubTime)}.
           </p>
         </div>
-
-        {/*
-          #3194: directly under the amount, because the first sentence of the
-          note is about that amount.
-
-          `amountPredatesTheChange: true` is a FACT about this card, not a
-          default. "Amount due" above is `booking.finalPriceCents`, and both
-          services that can park an edit write that column back UNCHANGED while
-          saving the new dates and deleting the departing guest's row — so this
-          card shows a post-edit stay beside a pre-edit price. A member who reads
-          it as settled and pays it overpays by exactly the amount nobody could
-          work out. The note says so in as many words.
-
-          Above the pay controls rather than below them, so it is read before the
-          member decides — and the controls stay armed. A parked change can
-          surrender nights nobody can value while the stay itself goes ahead, and
-          this link is the only way an unregistered guest can pay at all, so
-          hiding the button would cost them the booking when the hold expired
-          without moving a cent of the money under review. What the note removes
-          is the false reassurance, not the ability to pay.
-        */}
-        {financialReviewPending ? (
-          <FinancialReviewNotice
-            note={financialReviewNoteBesideAnAmount({
-              amountPredatesTheChange: true,
-            })}
-          />
-        ) : null}
 
         {recoveryNotice}
 

@@ -187,7 +187,7 @@ calls an existing API route, and the route decides, exactly as for a browser.
 | `get_availability` | Free beds at a lodge for each night of one month | read | `GET /api/availability` |
 | `list_lodges` | The lodges that can be booked, with their ids | read | `GET /api/lodges` |
 | `list_my_bookings` | The member's newest 200 bookings, made by them or as a guest; says when there are older ones | read | `GET /api/bookings/mine` |
-| `get_my_booking` | A summary of one of those bookings; the price and note only on a booking the member made, and whether the price is still being checked | read | `GET /api/bookings/[id]` |
+| `get_my_booking` | A summary of one of those bookings; the price and note only on a booking the member made | read | `GET /api/bookings/[id]` |
 | `get_my_family_group` | The member and their family groups' active members: id, name, age group, relationship, whether they can be booked, whether they have their own login, and the family group ids the family actions take | read | `GET /api/members/family` |
 | `get_my_profile` | The member's own name, contact details, address, age group and whether two-step sign-in is on | read | `GET /api/profile/summary` |
 | `list_notices` | Club notices the member can see, each body as plain text | read | `GET /api/notices` |

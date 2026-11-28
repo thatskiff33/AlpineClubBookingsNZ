@@ -16,7 +16,6 @@ import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
 import { readWorkPartyBookingFacts, WORK_PARTY_BOOKING_SELECT } from "@/lib/work-party-booking-facts";
 import { prepareBatchModificationForCallerTransaction } from "@/lib/booking-batch-modification-service";
-import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
 import {
   addBookingToWorkParty,
@@ -182,9 +181,6 @@ export async function POST(
     const xeroLock = getXeroLockGuardErrorResponse(error);
     if (xeroLock) {
       return NextResponse.json(xeroLock.body, { status: xeroLock.status });
-    }
-    if (error instanceof EditFinancialReviewPendingError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof ApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

@@ -15,7 +15,6 @@ import {
   isDuplicateCaptureRefundEvent,
 } from "@/lib/duplicate-capture-refund-event";
 import { settlementMarkerTimelineEntries } from "@/lib/manual-settlement-reversal-event";
-import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { readCancelledCardRefund, readCardShortfallTaskStatuses } from "@/lib/cancel-card-refund-shortfall-status";
 import type { BookingDetailRecord } from "./load-booking-detail";
@@ -23,10 +22,8 @@ import type { BookingDetailViewer } from "./booking-detail-viewer";
 
 /**
  * WHAT HAS HAPPENED TO THIS BOOKING (#2958): the audit rows and lifecycle
- * events it reads, the open-financial-review flag (read ONCE here — #3033 — and
- * returned so the admin tools reuse it rather than query again), the
- * plain-language narrative shared with the public payment-link page, and the
- * transaction-history timeline. The admin-only rows are withheld at the data
+ * events it reads, the plain-language narrative shared with the public
+ * payment-link page, and the transaction-history timeline. The admin-only rows are withheld at the data
  * feed, on `canSeeAdminTools`, exactly as before; the builders this calls are
  * the canonical ones.
  *
@@ -106,17 +103,6 @@ export async function loadBookingDetailHistory({
     },
   });
   /*
-    #3033: money held for review on this booking. Read HERE, once, and handed to
-    the pure narrative resolver as data — the resolver is reachable from
-    instrumentation and a database read inside it would break it at import.
-
-    Read for every viewer, member and admin alike, because the member-facing
-    banner is the whole point: this is not admin-gated information, it is what
-    the member is owed after their change saved.
-  */
-  const financialReviewPending = await bookingHasOpenFinancialReview(booking.id);
-
-  /*
     #3991 (`INV-PAY-119`): what this booking owes — the price plus a change fee
     recorded on the payment, less the credit applied in the ledger — read ONCE
     for the whole page, through the same read as the payment-link page and its
@@ -136,7 +122,6 @@ export async function loadBookingDetailHistory({
     // The event stamps in the narrative are real instants and read in the
     // club's zone; its stay dates are @db.Date lodge nights and do not (#3123).
     club,
-    financialReviewPending,
     ownerCreditHidden: !canSeeOwnerCredit,
     // #4097: a card cancel's shortfall tasks, so the narrative says where each part stands.
     cardShortfallStatuses: booking.status === "CANCELLED" ? await readCardShortfallTaskStatuses(booking.id) : {},
@@ -229,15 +214,10 @@ export async function loadBookingDetailHistory({
     auditLogs: bookingAuditLogs,
     duplicateCaptureRefunds,
     settlementMarkers,
-    // #3033: the same flag the banner above is built from, so the timeline's
-    // priced modification row and the banner cannot disagree about whether this
-    // booking's money is settled.
-    financialReviewPending,
     rateLabels,
   }, format);
 
   return {
-    financialReviewPending,
     amountOwed,
     bookingNarrative,
     bookingHistory,

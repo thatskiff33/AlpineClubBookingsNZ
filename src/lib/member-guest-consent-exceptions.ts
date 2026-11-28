@@ -212,13 +212,9 @@ export function describeConsentExceptionColumns(params: {
  * removed the gate altogether - every removal is priced from stored data - so
  * it cannot be why one of these rows is stuck.
  *
- * WHAT COULD STILL MAKE THIS CLASSIFIER STALE is the pending-review FENCE, and a
- * consent removal is still exempt from THAT (owner decision D-14,
- * `assertNoPendingEditFinancialReview`). If that exemption is ever narrowed, this
- * goes stale in the worst direction: it would report a row as `NO_LONGER_BLOCKED`
- * ("it should go through this time") for a removal the server is about to refuse
- * with a 409. The behavioural proof that a consent removal still comes off a
- * booking whose rows do not reconcile is in
+ * The pending-review fence, the last thing that could have refused such a
+ * removal, was retired by #4344 wave C2. The behavioural proof that a consent
+ * removal still comes off a booking whose rows do not reconcile is in
  * `booking-guest-consent-authority.test.ts` ("an unpriceable removal parks its
  * money instead of inventing it"). The file this docblock used to name,
  * `booking-guest-removal-exact-credit.test.ts`, has no consent-authority case in

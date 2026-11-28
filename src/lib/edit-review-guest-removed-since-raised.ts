@@ -39,8 +39,8 @@ export const EDIT_REVIEW_LATER_REMOVAL_COMPLETION_REFUSAL =
  * #4317 (owner decision on #4302, after review round 1): THE GUESTS A REVIEW
  * NAMES THAT WERE REMOVED FROM THE BOOKING AFTER IT WAS RAISED.
  *
- * Since #4317 a removal is priced, and a consent removal is exempt from the
- * open-review fence (D-14), so a guest a pre-#4317 review is about can come off
+ * Since #4317 a removal is priced, and a consent removal was exempt from the
+ * open-review fence (D-14; the fence itself was retired by #4344 wave C2), so a guest a pre-#4317 review is about can come off
  * the booking while the review is open - credited its whole STORED total. A
  * parked edit left that total exactly as it was (`INV-MOD-040`; on `main` every
  * parked writer stored `priceCents` unchanged, pinned by
