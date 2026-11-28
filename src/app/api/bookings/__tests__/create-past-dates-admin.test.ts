@@ -193,6 +193,15 @@ vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/lodge-capacity")),
   getLodgeCapacity: vi.fn().mockResolvedValue(30),
 }));
+// The club's year-end as the route resolves it (#5259): March unless a case
+// says otherwise. `vi.fn(impl)` keeps that default through `clearAllMocks()`.
+const financialYear = vi.hoisted(() => ({
+  resolveYearEnd: vi.fn(async () => 3),
+}));
+vi.mock("@/lib/financial-year-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/financial-year-server")),
+  clubFinancialYearEndMonth: financialYear.resolveYearEnd,
+}));
 vi.mock("@/lib/membership-type-policy", () => ({
   assertMembershipTypeBookingAllowed: vi.fn().mockResolvedValue(undefined),
   getMembershipTypeBookingPolicyErrorBody: (e: { message: string }) => ({
@@ -272,6 +281,7 @@ vi.mock("@/lib/family-booking-add-notifications", () => ({
 }));
 
 import { POST } from "@/app/api/bookings/route";
+import { assertMembershipTypeBookingAllowed } from "@/lib/membership-type-policy";
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/bookings", {
@@ -770,6 +780,31 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
 // added by returning a guest row carrying their `memberId`; the dispatcher itself
 // is stubbed (it is proven in isolation elsewhere), so these assert only that the
 // route hands it the added member on each path.
+describe("POST /api/bookings — the stay's season follows the club's year-end (#5259)", () => {
+  // A stay from 15 June 2027 is in the 2027 season under a March or December
+  // year-end and the 2026 season under a June one. The route resolves the
+  // year-end once, judges the membership-type policy in that season, and hands
+  // the same month to the create service that prices it.
+  it.each([
+    [3, 2027],
+    [6, 2026],
+    [12, 2027],
+  ])("under a year-end of month %i the stay is in season %i", async (yearEndMonth, seasonYear) => {
+    financialYear.resolveYearEnd.mockResolvedValueOnce(yearEndMonth);
+
+    const res = await POST(
+      makeRequest({ checkIn: "2027-06-15", checkOut: "2027-06-17", guests, forMemberId: "target-m1" }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(vi.mocked(assertMembershipTypeBookingAllowed)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ seasonYear, yearEndMonth }),
+    );
+    expect(h.createConfirmedBooking.mock.calls[0][0]).toMatchObject({ yearEndMonth });
+  });
+});
+
 describe("POST /api/bookings — S2 family-add notification wiring (#2284)", () => {
   const FAMILY_CHILD = "fam-child-m2";
 

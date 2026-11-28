@@ -308,6 +308,17 @@ vi.mock("@/lib/booking-guest-removal-service", () => ({
     mockRecalculateBookingPromo(...args),
 }));
 
+// The club's year-end, resolved once per offer pass (#5259). March unless a
+// case says otherwise; `vi.fn(impl)` keeps that default through a reset.
+const financialYear = vi.hoisted(() => ({
+  resolveYearEnd: vi.fn(async () => 3),
+}));
+vi.mock("@/lib/financial-year-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/financial-year-server")),
+  refreshFinancialYearConfig: financialYear.resolveYearEnd,
+  clubFinancialYearEndMonth: financialYear.resolveYearEnd,
+}));
+
 // #5410: the club time zone is read before an offer pass opens its transaction,
 // so a throw there escapes the pass. The real reader runs unless a test names
 // which call should fail.
@@ -448,6 +459,47 @@ describe("processWaitlistForDates", () => {
         where: { id: "booking1" },
         data: expect.objectContaining({ status: "WAITLIST_OFFERED" }),
       })
+    );
+  });
+
+  // #5259: the offer-time reprice places the stay in the season the club's
+  // RESOLVED year-end gives it. A stay from 15 June 2026 is in the 2026 season
+  // under a March or December year-end and the 2025 season under a June one.
+  it.each([
+    [3, 2026],
+    [6, 2025],
+    [12, 2026],
+  ])("reprices an offer under a year-end of month %i in season %i", async (yearEndMonth, seasonYear) => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+    financialYear.resolveYearEnd.mockResolvedValueOnce(yearEndMonth);
+
+    mockTxBookingFindMany.mockResolvedValue([
+      {
+        id: "booking1",
+        memberId: "m1",
+        checkIn: new Date("2026-06-15"),
+        checkOut: new Date("2026-06-17"),
+        createdAt: new Date("2026-04-01"),
+        totalPriceCents: 20000,
+        finalPriceCents: 20000,
+        guests: [{ id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] }],
+        member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+        promoRedemptions: [],
+      },
+    ]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+
+    await processWaitlistForDates({
+      checkIn: new Date("2026-06-15"),
+      checkOut: new Date("2026-06-17"),
+    }, CLUB_FORMAT_TEST);
+
+    expect(mockPriceWithPolicy).toHaveBeenCalledWith(
+      mockTx,
+      expect.objectContaining({ seasonYear, yearEndMonth }),
     );
   });
 
