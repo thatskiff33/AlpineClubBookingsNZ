@@ -2563,7 +2563,7 @@ same-owner cover, a separate urgent incident opens without changing
    the same lodge serialise while bookings at different lodges never contend.
    `CONCURRENCY_AND_LOCKING.md` maps the full advisory-lock landscape (all seven
    lock families, which paths take which, and the ordering disciplines).
-   Member lifecycle approval (delete / archive) acquires
+   Member lifecycle approval (delete / archive) and unarchive (#5540) acquire
    `pg_advisory_xact_lock(hashtext('member-lifecycle:<memberId>'))` inside
    the transaction. Future approve / reject paths that recount eligibility
    then mutate the member graph should follow the same idiom so a parallel
