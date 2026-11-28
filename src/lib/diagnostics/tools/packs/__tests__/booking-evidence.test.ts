@@ -262,6 +262,8 @@ interface Store {
   // #5190: active no-invoice coverage claims, as the settlement loader selects
   // them (the double holds only claims that already match that filter).
   subscriptionChargeCoverage: Row[];
+  // #5190 PR 3: issued, unpaid age-up top-ups, held already filtered likewise.
+  subscriptionAgeUpTopUp: Row[];
   memberInduction: Row[];
 }
 
@@ -424,9 +426,17 @@ const MODELS: Record<ModelName, ModelSpec> = {
           (claim) =>
             claim.memberId === row.memberId && claim.seasonYear === row.seasonYear,
         ),
+      ageUpAdjustments: (row, state) =>
+        state.subscriptionAgeUpTopUp.filter(
+          (topUp) =>
+            topUp.memberId === row.memberId && topUp.seasonYear === row.seasonYear,
+        ),
     },
   },
   subscriptionChargeCoverage: {
+    columns: ["id"],
+  },
+  subscriptionAgeUpTopUp: {
     columns: ["id"],
   },
   memberInduction: {
@@ -449,6 +459,7 @@ function emptyStore(): Store {
     organisation: [],
     memberSubscription: [],
     subscriptionChargeCoverage: [],
+    subscriptionAgeUpTopUp: [],
     memberInduction: [],
   };
 }
@@ -580,6 +591,9 @@ function relationModel(model: ModelName, relation: string): ModelName {
   if (model === "booking" && relation === "member") return "member";
   if (model === "memberSubscription" && relation === "chargeCoverage") {
     return "subscriptionChargeCoverage";
+  }
+  if (model === "memberSubscription" && relation === "ageUpAdjustments") {
+    return "subscriptionAgeUpTopUp";
   }
   if (model === "booking" && relation === "organisation") {
     return "organisation";
@@ -1927,6 +1941,21 @@ describe("booking block state: the club's HARD_BLOCK subscription refusal (#2376
     const row = await blockStateRow();
     expect(blockers(row)).toEqual([]);
     expect(row.blocker_count).toBe(0);
+  });
+
+  it("raises it for a PAID owner whose age-up top-up is issued and unpaid (#5190 PR 3)", async () => {
+    seedBooking({
+      status: "DRAFT",
+      finalPriceCents: FREE_BOOKING_CENTS,
+      lockoutMode: "HARD_BLOCK",
+    });
+    store.subscriptionAgeUpTopUp.push({
+      id: "top-up-1",
+      memberId: MEMBER_ID,
+      seasonYear: BOOKING_SEASON_YEAR,
+    });
+    const row = await blockStateRow();
+    expect(blockers(row)).toEqual(["subscription_unpaid_hard_block"]);
   });
 
   it("does not raise it for an owner a no-invoice fee covers, whatever their row says (#5190)", async () => {
