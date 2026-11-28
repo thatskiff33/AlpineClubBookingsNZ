@@ -59,7 +59,7 @@ const REQUEUE_ACTION = "email.failure.requeued";
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let review: typeof import("@/lib/email-failure-review");
 let retryFailedEmails: (typeof import("@/lib/cron-email-retry"))["retryFailedEmails"];
-let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSesEmailFeedback"];
+let recordEmailFeedbackSuppression: (typeof import("@/lib/email-suppression"))["recordEmailFeedbackSuppression"];
 
 (RUN ? describe : describe.skip)("Try again on an exhausted email failure - real PostgreSQL (#4963)", { timeout: 120_000 }, () => {
   const deleteFixtures = async () => {
@@ -129,7 +129,7 @@ let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSe
     ({ prisma } = await import("@/lib/prisma"));
     review = await import("@/lib/email-failure-review");
     ({ retryFailedEmails } = await import("@/lib/cron-email-retry"));
-    ({ recordSesEmailFeedback } = await import("@/lib/email-suppression"));
+    ({ recordEmailFeedbackSuppression } = await import("@/lib/email-suppression"));
     await deleteFixtures();
   }, 60_000);
 
@@ -230,8 +230,8 @@ let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSe
   it("is marked BOUNCED, never sent, when the recipient was suppressed after the press", async () => {
     const row = await exhausted(`bounced@${P}.test`);
     await press(row.id);
-    await recordSesEmailFeedback([
-      { email: row.to, reason: "BOUNCE", eventType: "bounce", bounceType: "Permanent" },
+    await recordEmailFeedbackSuppression([
+      { email: row.to, reason: "BOUNCE", eventType: "bounce", permanentBounce: true, bounceType: "Permanent" },
     ]);
 
     await retryFailedEmails();

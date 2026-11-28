@@ -13,6 +13,8 @@ const { mockPrisma, mockCreateAuditLog } = vi.hoisted(() => ({
     emailLog: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn() },
     auditLog: { findMany: vi.fn() },
     booking: { findMany: vi.fn() },
+    // #5469: which recipients are blocked; none here.
+    emailSuppression: { findMany: vi.fn(async () => []) },
   },
   mockCreateAuditLog: vi.fn(),
 }));
