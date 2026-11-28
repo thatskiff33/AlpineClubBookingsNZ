@@ -26,6 +26,6 @@ reason: the refusal of a deposit-settled booking sits with the reversal's
   other refusals, before anything is written.
 
 function: src/lib/additional-payment-resend-service.ts#resendAdditionalPaymentEmail
-lines: 389
+lines: 381
 reason: the fence that keeps a deposit balance out of the extra's re-send sits
   with the service's other refusals, before anything is claimed.
