@@ -20,10 +20,15 @@ const openingCreditsRow = vi.hoisted(() => vi.fn());
 // whose own test holds that an expired chart is still read and a failed read is null).
 const storedChart = vi.hoisted(() => vi.fn());
 const accountMappingRows = vi.hoisted(() => vi.fn());
+// #5235 review: the earliest refundable booking, whose anchor decides which periods a refund note can carry.
+const refundableBooking = vi.hoisted(() => vi.fn(async () => null as unknown));
 // #4988: the health check asks whether the Opening Credits account is mapped,
 // and reads every stored account mapping to see whether another shares its account.
 vi.mock("@/lib/prisma", () => ({
-  prisma: { xeroAccountMapping: { findUnique: openingCreditsRow, findMany: accountMappingRows } },
+  prisma: {
+    xeroAccountMapping: { findUnique: openingCreditsRow, findMany: accountMappingRows },
+    booking: { findFirst: refundableBooking },
+  },
 }));
 vi.mock("@/lib/xero-admin-cache", () => ({ readLastStoredChartOfAccounts: storedChart }));
 vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
@@ -316,7 +321,7 @@ describe("readXeroTaxHealth", () => {
 
   describe("Hut Fee Refunds mapped to an expense account the code in force cannot sit on (#5235)", () => {
     const REFUND_ACCOUNT_PROBLEM =
-      "Hut Fee Refunds is mapped to an expense account, and Xero's tax rate OUTPUT2 (15% GST on Income) cannot be used on expenses, so Xero would reject refund credit notes. Map Hut Fee Refunds to a revenue account, or ask your accountant which account and tax rate refunds should use.";
+      "Hut Fee Refunds is mapped to an expense account. Xero's tax rate OUTPUT2 (15% GST on Income), which refund credit notes carry, cannot be used on expenses, so Xero would reject them. Map Hut Fee Refunds to a revenue account, or ask your accountant which account and tax rate refunds should use.";
     const CHART = [
       { code: "200", name: "Hut Fees", type: "REVENUE", class: "REVENUE" },
       { code: "429", name: "General Expenses", type: "OVERHEADS", class: "EXPENSE" },
@@ -375,6 +380,30 @@ describe("readXeroTaxHealth", () => {
       // With an item code and no chosen account, the line carries no account code: Xero takes it from the item.
       storeRefundMapping({ code: null, itemCode: "REFUND-ITEM" });
       expect((await readXeroTaxHealth()).problems).toEqual([]);
+    });
+
+    it("#5235 review: judges every registered period a refundable booking can still anchor to, not only today's", async () => {
+      // Registered on OUTPUT2 until 1 June 2026, unregistered from then (today is 1 July 2026).
+      const unregisteredFromJune = period({ gstRegistered: false, xeroTaxType: null, effectiveFrom: requireCalendarDate("2026-06-01") });
+      mocks.schedule.mockResolvedValue([period(), unregisteredFromJune]);
+      mocks.organisation.mockResolvedValue({ paysTax: false });
+      // No refundable booking from before June: only today's unregistered period is reachable.
+      refundableBooking.mockResolvedValue(null);
+      expect((await readXeroTaxHealth()).problems).toEqual([]);
+      // A booking made in May, its stay still to come, is refunded under May's OUTPUT2.
+      refundableBooking.mockResolvedValue({ createdAt: new Date("2026-05-10T00:00:00.000Z"), parentBooking: null });
+      expect((await readXeroTaxHealth()).problems).toEqual([REFUND_ACCOUNT_PROBLEM]);
+      const where = (refundableBooking.mock.calls[0] as unknown as [{ where: unknown }])[0].where;
+      expect(where).toMatchObject({
+        OR: [{ checkOut: { gte: new Date("2026-07-01T00:00:00.000Z") } }, { payment: { status: { in: ["SUCCEEDED", "PARTIALLY_REFUNDED"] } } }],
+      });
+    });
+
+    it("#5235 review: judges a registration scheduled after today", async () => {
+      const registersInAugust = period({ effectiveFrom: requireCalendarDate("2026-08-01") });
+      mocks.schedule.mockResolvedValue([unregistered, registersInAugust]);
+      mocks.organisation.mockResolvedValue({ paysTax: false });
+      expect((await readXeroTaxHealth()).problems).toContain(REFUND_ACCOUNT_PROBLEM);
     });
 
     it("leaves a code Xero no longer has to the code's own problem", async () => {
