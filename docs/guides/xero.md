@@ -330,7 +330,7 @@ is accepted, as is any code while Xero is not connected; **Refresh Xero
 reference data** on the mappings card renews the copy. If Xero has changed
 the class assigned to a code, refresh before retrying a refused save. A code saved before
 this check existed is left alone when you save other mappings, and the setup
-checklist and the mapping row point it out. If another save changes an account
+checklist and the mapping row point it out. The checklist uses the last stored chart even after its hour is up; refresh it if the account has changed in Xero. If another save changes an account
 code after yours starts checking it but before it writes, reload and try again.
 
 ### Subscribe to Xero webhooks, including credit notes

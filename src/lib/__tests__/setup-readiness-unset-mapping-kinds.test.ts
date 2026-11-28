@@ -39,7 +39,7 @@ const db = vi.hoisted(() => {
     xeroAdminCache: {
       findUnique: async () =>
         state.chart
-          ? { payload: state.chart, fetchedAt: new Date("2026-07-01T00:00:00.000Z"), expiresAt: new Date("2026-07-01T01:00:00.000Z") }
+          ? { payload: state.chart, fetchedAt: new Date("2026-06-30T00:00:00.000Z"), expiresAt: new Date("2026-06-30T01:00:00.000Z") }
           : null,
     },
     xeroAccountMapping: {
@@ -84,13 +84,11 @@ vi.mock("@/lib/stripe-config", () => ({
 }));
 
 import { getSetupDatabaseSnapshot } from "@/lib/setup-readiness-db";
-import { clearChartOfAccountsCache } from "@/lib/xero-admin-cache";
 
 afterEach(() => {
   db.state.mappingRows = [];
   db.state.connectedTenant = null;
   db.state.chart = null;
-  clearChartOfAccountsCache();
 });
 
 describe("the two kinds of undecided mapping in the setup snapshot", () => {
@@ -131,7 +129,7 @@ describe("stored account codes checked against the cached chart of accounts (#52
     { code: "429", name: "General Expenses", type: "OVERHEADS", class: "EXPENSE" },
   ];
 
-  it("MUTATION: names a stored code the chart shows is the wrong kind of account, in registry order", async () => {
+  it("keeps a wrong-kind warning after the stored chart expires, in registry order", async () => {
     db.state.connectedTenant = "tenant-here";
     db.state.chart = CHART;
     db.state.mappingRows = [
