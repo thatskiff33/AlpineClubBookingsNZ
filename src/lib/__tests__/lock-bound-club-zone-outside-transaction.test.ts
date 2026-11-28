@@ -530,6 +530,9 @@ const TRANSACTION_OPENERS = [
   // #4279: a refund-note repair's completion runs its claim, pointer and links
   // inside the transaction that took the Payment row first.
   "completeAdoptingCanonicalRefundNote(",
+  // #5005 (child B): the manual reversal runs its caller's `beforeReverse`
+  // under its locks (a paid-booking import's batch reversal claims its row).
+  "reverseManualBookingPayment(",
 ] as const;
 
 /**
