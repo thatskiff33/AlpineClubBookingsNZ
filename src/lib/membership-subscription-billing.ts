@@ -2526,8 +2526,7 @@ export async function queueApprovedMembershipSubscriptionCharges(input: {
     input.decisionDate ??
     dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
   const yearEndMonth = await refreshFinancialYearConfig();
-  const seasonYear = seasonYearOfStoredDate(decisionDate, yearEndMonth);
-  const preview = await buildSubscriptionBillingPreview({ seasonYear, yearEndMonth, decisionDate, memberIds: input.memberIds });
+  const preview = await buildSubscriptionBillingPreview({ seasonYear: seasonYearOfStoredDate(decisionDate, yearEndMonth), yearEndMonth, decisionDate, memberIds: input.memberIds });
   const result = await confirmSubscriptionBillingPreview({
     preview,
     expectedConfirmationToken: preview.confirmationToken,

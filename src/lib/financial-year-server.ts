@@ -21,6 +21,7 @@ import {
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
   clubSeasonYear,
   getFinancialYearEndMonth,
+  seasonYearOfStoredDate,
   setFinancialYearEndMonth,
 } from "@/lib/financial-year";
 import logger from "@/lib/logger";
@@ -117,6 +118,15 @@ export async function clubCurrentSeasonYear(
   clock?: ClubClock,
 ): Promise<number> {
   return clubSeasonYear(zone, clock, await clubFinancialYearEndMonth());
+}
+
+/**
+ * The membership season a stored `@db.Date` day falls in, under the club's
+ * resolved year-end (#5259). It resolves the month, which may reach Xero, so a
+ * caller holding a transaction resolves the month first and derives instead.
+ */
+export async function clubSeasonYearOfStoredDate(value: Date): Promise<number> {
+  return seasonYearOfStoredDate(value, await clubFinancialYearEndMonth());
 }
 
 /**

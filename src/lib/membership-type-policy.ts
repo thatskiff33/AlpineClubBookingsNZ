@@ -9,7 +9,6 @@ import {
   type BookingGuestLookupDb,
 } from "@/lib/booking-guests";
 import logger from "@/lib/logger";
-import { seasonSlashLabel } from "@/lib/season-label";
 import {
   MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE,
   MEMBER_GUEST_CROSS_FAMILY_REFUSAL_STATUS,
@@ -165,8 +164,8 @@ export class MembershipTypeBookingPolicyError extends Error {
    */
   public readonly crossFamilyMemberIds?: readonly string[];
 
-  constructor(public readonly blockedMembers: MembershipTypeBookingPolicyBlock[], yearEndMonth: number) {
-    super(buildMembershipTypeBookingPolicyMessage(blockedMembers, yearEndMonth));
+  constructor(public readonly blockedMembers: MembershipTypeBookingPolicyBlock[]) {
+    super(buildMembershipTypeBookingPolicyMessage(blockedMembers));
     this.name = "MembershipTypeBookingPolicyError";
     const collapsed = blockedMembers.filter((block) => block.crossFamily);
     this.crossFamilyMemberIds =
@@ -217,6 +216,10 @@ function isMembershipTypePolicyDb(db: unknown): db is MembershipTypePolicyDb {
       candidate.seasonalMembershipAssignment?.findMany &&
       candidate.membershipType?.findMany,
   );
+}
+
+function formatSeasonDisplay(seasonYear: number) {
+  return `${seasonYear}/${seasonYear + 1}`;
 }
 
 function memberDisplayName(member: Pick<MembershipTypePolicyMember, "firstName" | "lastName" | "email">) {
@@ -408,7 +411,6 @@ export async function resolveMembershipTypePolicyForMember(
 
 function buildMembershipTypeBookingPolicyMessage(
   blocks: MembershipTypeBookingPolicyBlock[],
-  yearEndMonth: number,
 ) {
   // Reading the first block is what says there is a block to describe; it is
   // also the block the closing sentence names its season from, so the empty
@@ -441,16 +443,16 @@ function buildMembershipTypeBookingPolicyMessage(
 
   const ownerBlock = blocks.find((block) => block.scope === "BOOKING_OWNER");
   if (ownerBlock && blocks.length === 1) {
-    return `Your ${seasonSlashLabel(ownerBlock.seasonYear, yearEndMonth)} membership type (${ownerBlock.membershipTypeName}) does not allow lodge bookings.`;
+    return `Your ${formatSeasonDisplay(ownerBlock.seasonYear)} membership type (${ownerBlock.membershipTypeName}) does not allow lodge bookings.`;
   }
 
   const guestBlocks = blocks.filter((block) => block.scope === "MEMBER_GUEST");
   const firstGuestBlock = guestBlocks[0];
   if (firstGuestBlock !== undefined && guestBlocks.length === blocks.length) {
-    return `The following member guests cannot be booked for the ${seasonSlashLabel(firstGuestBlock.seasonYear, yearEndMonth)} season: ${guestBlocks.map((block) => block.name).join(", ")}.`;
+    return `The following member guests cannot be booked for the ${formatSeasonDisplay(firstGuestBlock.seasonYear)} season: ${guestBlocks.map((block) => block.name).join(", ")}.`;
   }
 
-  return `One or more members cannot be booked for the ${seasonSlashLabel(firstBlock.seasonYear, yearEndMonth)} season under their membership type policy.`;
+  return `One or more members cannot be booked for the ${formatSeasonDisplay(firstBlock.seasonYear)} season under their membership type policy.`;
 }
 
 /**
@@ -629,11 +631,11 @@ export async function getMembershipTypeBookingPolicyBlocks(
 
 export async function assertMembershipTypeBookingAllowed(
   db: unknown,
-  params: Parameters<typeof getMembershipTypeBookingPolicyBlocks>[1] & { yearEndMonth: number },
+  params: Parameters<typeof getMembershipTypeBookingPolicyBlocks>[1],
 ): Promise<void> {
   const blocks = await getMembershipTypeBookingPolicyBlocks(db, params);
   if (blocks.length > 0) {
-    throw new MembershipTypeBookingPolicyError(blocks, params.yearEndMonth);
+    throw new MembershipTypeBookingPolicyError(blocks);
   }
 }
 
@@ -1231,14 +1233,8 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
     guests: UnratedGuestInput[];
     seasons: SeasonRateData[];
     groupDiscount?: GroupDiscountConfig;
-    /**
-     * The membership season `checkIn` falls in. REQUIRED (#5259): the caller
-     * derives it from the club's resolved year-end month, before any
-     * transaction `db` belongs to, so the price never rests on a default.
-     */
+    /** REQUIRED (#5259): from the club's resolved year-end, never a default. */
     seasonYear: number;
-    /** Resolved before any transaction, also used to name a policy refusal. */
-    yearEndMonth: number;
     /**
      * Forwarded to the policy guard below (privacy re-review of MG3 #2308,
      * finding 2). An admin/on-behalf or unattended system path passes `true` and
@@ -1261,7 +1257,6 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
     ownerMemberId: input.ownerMemberId,
     guests: input.guests,
     seasonYear,
-    yearEndMonth: input.yearEndMonth,
     skipAuthorization: input.skipAuthorization,
   });
   const [ratedGuests, groupDiscount] = await Promise.all([

@@ -103,11 +103,7 @@ export type BookingImportContext = {
   today: Date;
   /** The club's date format for refusal text, resolved before any transaction. */
   format: ClubDateFormat;
-  /**
-   * The club's financial year-end month (#5259), resolved before any
-   * transaction: it places each stay in its membership season for the hosting
-   * check and the app's rate.
-   */
+  /** The club's financial year-end month (#5259), resolved before any transaction. */
   yearEndMonth: number;
 };
 
@@ -475,7 +471,6 @@ async function appRateCents(
       guests: toGuestPricingInputs(booking.guests),
       seasons: toSeasonRateData(seasons),
       seasonYear: seasonYearOfStoredDate(booking.checkIn, yearEndMonth),
-      yearEndMonth,
       skipAuthorization: true,
     });
     return quote.totalPriceCents;

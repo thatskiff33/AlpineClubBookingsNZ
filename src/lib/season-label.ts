@@ -58,15 +58,16 @@
  * is derived from the same caller-supplied month as the name. `INV-SSOT-003`
  * now bans `getFinancialYearEndMonth` as a parameter default outright.
  *
- * ## One call site still writes the slash name by hand
+ * ## Two places still write the slash name by hand
  *
- * `subscription-lockout-enforcement.ts` builds the unpaid-subscription rate
- * notice from `${seasonYear}/${seasonYear + 1}`: it has no year-end in scope,
- * and threading one in reaches every booking pricing path. The booking,
- * confirm-draft and group-trip refusals, the reports heading, the member
- * subscription status and the membership-type refusal name theirs through
- * {@link seasonSlashLabel} (#5259). `__tests__/season-label-adoption-contract.test.ts`
- * tells a NAME from ARITHMETIC over comment-stripped source.
+ * The unpaid-subscription rate notice (`subscription-lockout-enforcement.ts`)
+ * and the membership-type refusal (`membership-type-policy.ts`) build
+ * `${seasonYear}/${seasonYear + 1}`: neither has a year-end in scope, and
+ * threading one in reaches every booking pricing path. The booking,
+ * confirm-draft and group-trip refusals, the reports heading and the member
+ * subscription status name theirs through {@link seasonSlashLabel} (#5259).
+ * `__tests__/season-label-adoption-contract.test.ts` tells a NAME from
+ * ARITHMETIC over comment-stripped source.
  *
  * **THE FOUR MONEY AND PROVIDER SITES ADOPTED THIS IN #3116, AND THE EXCLUSION
  * LIST IS NOW EMPTY.** They were `xero-subscription-invoices.ts` and

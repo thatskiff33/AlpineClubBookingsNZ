@@ -763,12 +763,7 @@ export async function evaluateProposalPartyViolations(
   db: PolicyEvaluationDb,
   lodgeId: string,
   party: ProposalParty,
-  /**
-   * The club's resolved financial year-end month (#5259), which places the
-   * proposal's check-in in its membership season. Resolved by the caller before
-   * any transaction, never defaulted.
-   */
-  yearEndMonth: number,
+  yearEndMonth: number, // the club's resolved year-end (#5259), resolved before any transaction
   /**
    * Who is asking, and about which booking (#2543/#2569). Optional, and used by
    * both the paid-up-adult and adult-member-hosting evaluations below.
@@ -792,14 +787,7 @@ export async function evaluateProposalPartyViolations(
     bookingId?: string | null;
   },
 ): Promise<PolicyExceptionViolation[]> {
-  return evaluatePartyViolations(
-    db,
-    lodgeId,
-    party,
-    presence,
-    true,
-    seasonYearOfStoredDate(parseDateOnly(party.checkIn), yearEndMonth),
-  );
+  return evaluatePartyViolations(db, lodgeId, party, presence, true, seasonYearOfStoredDate(parseDateOnly(party.checkIn), yearEndMonth));
 }
 
 /**
@@ -816,10 +804,8 @@ export async function evaluatePersistedBookingNonHostingPolicyViolations(
   presence: { requestedByMemberId?: string | null; bookingId: string },
   options: {
     /**
-     * The membership season these nights fall in, resolved authoritatively by the
-     * caller. REQUIRED (#5259): see the same parameter on
-     * `evaluateProposedPaidUpAdultPresence` for why a read-only evidence caller
-     * resolves it from stored state rather than from any process-level cache.
+     * The membership season, resolved by the caller from stored state (#5259); see
+     * `evaluateProposedPaidUpAdultPresence` on why never from a process cache.
      */
     seasonYear: number;
     /**
@@ -892,8 +878,7 @@ async function evaluatePartyViolations(
         groupBookingId,
         lodgeId,
         checkIn,
-        checkOut,
-        seasonYear,
+        checkOut, seasonYear,
         guests: party.guests.map((guest) => ({
           firstName: guest.firstName,
           lastName: guest.lastName,

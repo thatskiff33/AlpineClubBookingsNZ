@@ -320,14 +320,10 @@ export async function modifyBookingDates({
   // money, and two todays on one date change would price it against itself.
   const todayAtClub = (await clubTime()).today();
   const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
-  // The club's format (#3565), for the same reason and at the same point: the
-  // edit renders money under both locks, so it is read before either is taken.
-  const format = await clubFormatValues();
-  // #4627: the journal's posting context, before the transaction for the same reason.
-  const journal = await resolveBookingMoneyPostingContext();
-  // #5259: the club's financial year-end, which places the new check-in in its
-  // membership season. Out here because resolving it can reach Xero.
-  const yearEndMonth = await clubFinancialYearEndMonth();
+  // The club's format (#3565), journal context (#4627) and year-end (#5259), for the same
+  // reason: the edit prices and renders money under both locks, so each is read first.
+  const [format, journal, yearEndMonth] =
+    await Promise.all([clubFormatValues(), resolveBookingMoneyPostingContext(), clubFinancialYearEndMonth()]);
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): a date change moves money (reduction
@@ -566,7 +562,6 @@ export async function modifyBookingDates({
       ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
-      yearEndMonth,
       // Finding 2 (privacy re-review of MG3 #2308) — see
       // `getMembershipTypeBookingPolicyBlocks`.
       skipAuthorization: actor.role === "ADMIN",
@@ -591,7 +586,6 @@ export async function modifyBookingDates({
         // would at a club with no group discount at all.
         groupDiscount: toEditTimeGroupDiscountConfig(groupDiscountSetting),
         seasonYear,
-        yearEndMonth,
         skipAuthorization: actor.role === "ADMIN",
       });
     } catch (error) {

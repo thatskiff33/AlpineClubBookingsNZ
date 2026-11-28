@@ -267,14 +267,10 @@ export async function POST(
   // #3029 (W10, `INV-MOD-059`) — whether an added linked member is seeded from
   // their dietary/allergy profile. The toggle, read HERE for the same reason.
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
-  // #4627: the journal's posting context, resolved before the transaction (`INV-LOCK-004`).
-  const journal = await resolveBookingMoneyPostingContext();
-  // #5259: the club's financial year-end, which places the stay in a membership
-  // season. Resolved here because it can reach Xero on a cold cache (`INV-LOCK-004`).
-  const yearEndMonth = await clubFinancialYearEndMonth();
+  // The club's format (#3565), the journal's posting context (#4627) and the club's
+  // year-end (#5259), each resolved once before any transaction or lock below.
+  const [format, journal, yearEndMonth] =
+    await Promise.all([clubFormatValues(), resolveBookingMoneyPostingContext(), clubFinancialYearEndMonth()]);
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -498,7 +494,6 @@ export async function POST(
           })),
         ],
         seasonYear,
-        yearEndMonth,
         // Finding 2 (privacy re-review of MG3 #2308).
         skipAuthorization: isAdmin,
       });
@@ -506,8 +501,7 @@ export async function POST(
       if (!isAdmin) {
         const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
           bookingMemberId: bookingOwner(booking).memberId,
-          checkIn: booking.checkIn,
-          yearEndMonth,
+          checkIn: booking.checkIn, yearEndMonth,
           guests: normalizedNewGuests,
         });
 
@@ -664,7 +658,6 @@ export async function POST(
           // (#1036, INV-MOD-005).
           groupDiscount: toEditTimeGroupDiscountConfig(groupDiscountSetting),
           seasonYear,
-          yearEndMonth,
           // #2543 — the mode this request already resolved. This call runs inside
           // the transaction holding the per-lodge capacity lock, so being handed
           // the mode also removes a second pooled connection from under the lock.

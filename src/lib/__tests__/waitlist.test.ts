@@ -499,7 +499,7 @@ describe("processWaitlistForDates", () => {
 
     expect(mockPriceWithPolicy).toHaveBeenCalledWith(
       mockTx,
-      expect.objectContaining({ seasonYear, yearEndMonth }),
+      expect.objectContaining({ seasonYear }),
     );
   });
 

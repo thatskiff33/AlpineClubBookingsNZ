@@ -249,7 +249,6 @@ describe("membership type booking and subscription policy", () => {
         guests: [{ ageTier: "ADULT", isMember: true, memberId: "guest-1" }],
         seasons: seasonRates,
         seasonYear: seasonYearOfStoredDate(new Date("2026-05-01T00:00:00.000Z"), 3),
-        yearEndMonth: 3,
       }),
     ).rejects.toMatchObject({
       code: "MEMBERSHIP_TYPE_BLOCKS_BOOKING",
@@ -264,7 +263,6 @@ describe("membership type booking and subscription policy", () => {
         guests: [{ ageTier: "ADULT", isMember: true, memberId: "guest-1" }],
         seasons: seasonRates,
         seasonYear: seasonYearOfStoredDate(new Date("2026-05-01T00:00:00.000Z"), 3),
-        yearEndMonth: 3,
       });
     } catch (error) {
       expect(error).toBeInstanceOf(MembershipTypeBookingPolicyError);
@@ -300,7 +298,6 @@ describe("membership type booking and subscription policy", () => {
       seasons: seasonRates,
       groupDiscount: { enabled: true, minGroupSize: 1, summerOnly: false },
       seasonYear: seasonYearOfStoredDate(new Date("2026-05-01T00:00:00.000Z"), 3),
-      yearEndMonth: 3,
     });
 
     expect(price.totalPriceCents).toBe(2400);
@@ -591,7 +588,6 @@ describe("group-discount NULL substitution target fallback (#1930, E4 review F2)
         rateMembershipTypeId: null,
       },
       seasonYear: seasonYearOfStoredDate(new Date("2026-05-01T00:00:00.000Z"), 3),
-      yearEndMonth: 3,
     });
 
     // Substituted to FULL's 1000 rate, not the NON_MEMBER 2400 rate.

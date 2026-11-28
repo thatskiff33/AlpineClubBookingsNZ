@@ -307,8 +307,6 @@ export async function priceDeferredNonMemberPortion(
     groupDiscount?: GroupDiscountConfig;
     /** The stay's membership season, as the caller resolved it (#5259). */
     seasonYear: number;
-    /** The club's resolved year-end month the season was derived from. */
-    yearEndMonth: number;
   }
 ): Promise<PriceBreakdown | null> {
   const nonMemberGuests = input.guests.filter((guest) => !guest.isMember);
@@ -322,7 +320,6 @@ export async function priceDeferredNonMemberPortion(
     seasons: input.seasons,
     groupDiscount: input.groupDiscount,
     seasonYear: input.seasonYear,
-    yearEndMonth: input.yearEndMonth,
   });
 }
 

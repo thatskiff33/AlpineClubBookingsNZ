@@ -93,8 +93,7 @@ import {
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
 import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
-import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { clubFinancialYearEndMonth } from "@/lib/financial-year-server";
+import { clubFinancialYearEndMonth, clubSeasonYearOfStoredDate } from "@/lib/financial-year-server";
 import {
   getDefaultLodgeId,
   lodgeNullTolerantScope,
@@ -587,7 +586,7 @@ export async function calculateIndicativeNonMemberPriceCents(input: {
   // (all NON_MEMBER_DEFAULT here) so pricing keys on the NON_MEMBER type
   // (#1930, E4).
   const ratedGuests = await resolveGuestRateMembershipTypes(prisma, {
-    seasonYear: seasonYearOfStoredDate(input.checkIn, await clubFinancialYearEndMonth()),
+    seasonYear: await clubSeasonYearOfStoredDate(input.checkIn),
     guests: input.guests.map((guest) => ({
       ageTier: guest.ageTier,
       isMember: false,
@@ -2062,12 +2061,9 @@ export async function approveBookingRequest(input: {
    */
   ownerContactMemberId?: string | null;
 }): Promise<ApproveBookingRequestOutcome> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
-  // The club's year-end (#5259), for the same reason: the guest writer inside
-  // the transaction reads the season at check-in from it.
-  const yearEndMonth = await clubFinancialYearEndMonth();
+  // The club's format (#3565) and year-end (#5259), resolved once, before any
+  // transaction or lock below — never per amount and never inside a transaction.
+  const [format, yearEndMonth] = await Promise.all([clubFormatValues(), clubFinancialYearEndMonth()]);
   const foundRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -2324,8 +2320,7 @@ export async function approveBookingRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
-        format,
-        yearEndMonth,
+        format, yearEndMonth,
       });
 
       let booking: { id: string };

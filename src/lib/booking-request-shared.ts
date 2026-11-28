@@ -343,7 +343,6 @@ export async function buildApprovalGuestCreates(
   await assertMembershipTypeBookingAllowed(tx, {
     guests: unratedGuestCreates,
     seasonYear,
-    yearEndMonth,
     // Finding 2 (privacy re-review of MG3 #2308). Both approval pipelines are
     // admin-only — the converted booking has no member owner yet, which is also
     // why no family boundary could be computed here — so this keeps the detailed

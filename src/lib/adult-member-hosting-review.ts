@@ -117,10 +117,7 @@ import {
   type SubscriptionLockoutDb,
 } from "@/lib/subscription-lockout-enforcement";
 import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
-import {
-  getFinancialYearEndMonth,
-  seasonYearOfStoredDate,
-} from "@/lib/financial-year";
+import { getFinancialYearEndMonth, seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /**
  * Booking-side integration for the adult-member hosting policy (#2364).
@@ -1004,9 +1001,9 @@ async function evaluateLoadedBookingAdultMemberHosting(
   options: {
     /**
      * The season the subscription bridge judges settlement in, when the caller has
-     * already resolved it authoritatively: supplied by read-only evidence callers.
-     * Omitted by every writer, whose season comes from the year-end this process
-     * last resolved; see the bridge call below, and
+     * already resolved it: evidence callers. A writer omits it and gets the month this
+     * process last resolved, BY NAME (#5259): resolving it would read, maybe reach Xero,
+     * under the writer's locks (`INV-LOCK-004`). See
      * `evaluatePersistedBookingAdultMemberHostingReadOnly`.
      */
     seasonYear?: number;
@@ -1147,18 +1144,7 @@ async function evaluateLoadedBookingAdultMemberHosting(
         ...groupTrip.participants,
       ],
       db,
-      // THE WRITERS' SEASON IS THE ONE THIS PROCESS LAST RESOLVED, READ HERE BY
-      // NAME (#5259). Every other season derivation is handed the club's resolved
-      // year-end by its caller. This one cannot be yet: the reconcilers run inside
-      // the transactions of some thirty writers (payment settlement and the
-      // coverage drain among them), and resolving the year-end here would be a
-      // global-client read and possibly a Xero call under their locks
-      // (`INV-LOCK-004`). The season is read only under `NON_MEMBER_PRICING`,
-      // which needs the Xero module on, and every gated booking request then
-      // reseeds this cache before its transaction opens
-      // (`resolveSubscriptionLockoutPolicy`).
-      options.seasonYear ??
-        seasonYearOfStoredDate(booking.checkIn, getFinancialYearEndMonth()),
+      options.seasonYear ?? seasonYearOfStoredDate(booking.checkIn, getFinancialYearEndMonth()),
       options.subscriptionLockoutMode,
       options.readAgeTierSettings,
     );

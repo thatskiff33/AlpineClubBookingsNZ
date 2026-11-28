@@ -799,7 +799,7 @@ describe("POST /api/bookings — the stay's season follows the club's year-end (
     expect(res.status).toBe(201);
     expect(vi.mocked(assertMembershipTypeBookingAllowed)).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ seasonYear, yearEndMonth }),
+      expect.objectContaining({ seasonYear }),
     );
     expect(h.createConfirmedBooking.mock.calls[0][0]).toMatchObject({ yearEndMonth });
   });

@@ -503,7 +503,6 @@ describe("resolveGuestRateMembershipTypes — other-lodge members", () => {
       ],
       seasons: seasonRates,
       seasonYear: 2026,
-      yearEndMonth: 3,
     });
 
     // Two nights each: 1000 and 500 at the member rates, 2400 at non-member.

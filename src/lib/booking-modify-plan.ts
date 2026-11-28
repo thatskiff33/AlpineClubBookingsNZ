@@ -731,8 +731,7 @@ export async function prepareGuestPlan(
     newCheckIn,
     newCheckOut,
     memberGuestPolicy,
-    subscriptionLockoutMode,
-    yearEndMonth,
+    subscriptionLockoutMode, yearEndMonth,
     today,
     format,
     now = new Date(),
@@ -753,25 +752,18 @@ export async function prepareGuestPlan(
      */
     memberGuestPolicy?: MemberGuestAddPolicy;
     /**
-     * The club's subscription-lockout mode (#2543), resolved by the caller before
-     * it opened this transaction.
+     * The club's subscription-lockout mode (#2543), and `yearEndMonth` (#5259) that
+     * places both check-ins in their seasons, resolved before this transaction.
      *
-     * This planner is the SIXTH enforcement site — the apply half of the edit flow
-     * whose preview is `modify-quote` — and it was the one the issue's anchor list
-     * missed. Without the mode it hard-blocked an unpaid member guest in EVERY
-     * regime, so under NON_MEMBER_PRICING a member was quoted the non-member price
-     * with an explanation and then refused on save with the pre-#2543 403: an edit
-     * that could never complete. Optional, and a missing value is read as
-     * HARD_BLOCK, which is the pre-#2543 behaviour and the safe direction for the
-     * planner's own unit tests.
+     * This planner is the SIXTH enforcement site — the apply half of the edit flow whose
+     * preview is `modify-quote` — and it was the one the issue's anchor list missed.
+     * Without the mode it hard-blocked an unpaid member guest in EVERY regime, so under
+     * NON_MEMBER_PRICING a member was quoted the non-member price with an explanation
+     * and then refused on save with the pre-#2543 403: an edit that could never
+     * complete. Optional, and a missing value is read as HARD_BLOCK, which is the
+     * pre-#2543 behaviour and the safe direction for the planner's own unit tests.
      */
     subscriptionLockoutMode?: SubscriptionLockoutMode;
-    /**
-     * The club's resolved financial year-end month (#5259), which places the
-     * stored and the proposed check-in in their membership seasons. REQUIRED,
-     * and resolved by the caller before it opened this transaction
-     * (`INV-LOCK-004`): resolving it can reach Xero.
-     */
     yearEndMonth: number;
     /**
      * The CLUB's today, as the UTC-midnight `Date` a `@db.Date` round-trips
@@ -1197,8 +1189,7 @@ export async function prepareGuestPlan(
   if (!guestAuthorizationIsAdmin) {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
       bookingMemberId: bookingOwner(booking).memberId,
-      checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
-      yearEndMonth,
+      checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn, yearEndMonth,
       guests: normalizedAddGuests ?? [],
     });
     // #2543: mode-gated like the five sibling refusal sites. The lookup above
@@ -1597,8 +1588,7 @@ export async function calculateModifiedPricing(
     normalizedAddGuests,
     removeGuestIds,
     guestsForPricing,
-    subscriptionLockoutMode,
-    yearEndMonth,
+    subscriptionLockoutMode, yearEndMonth,
     skipBookingLifecycleRules,
     seasonRateData,
     adminOverride = false,
@@ -1654,12 +1644,10 @@ export async function calculateModifiedPricing(
      */
     skipAuthorization?: boolean;
     /**
-     * #2543 — the mode this request resolved, forwarded to every rate resolution
-     * and to the price call below, so all four agree and none of them reads the
-     * settings from inside the transaction holding the capacity lock.
+     * #2543 — the mode this request resolved (and #5259 its year-end), forwarded to every rate
+     * resolution and the price call below, so all four agree and none reads settings under the lock.
      */
     subscriptionLockoutMode?: SubscriptionLockoutMode;
-    /** The club's resolved year-end month; see `prepareGuestPlan` (#5259). */
     yearEndMonth: number;
   },
 ): Promise<PricingResult> {
@@ -1668,7 +1656,6 @@ export async function calculateModifiedPricing(
     ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
-    yearEndMonth,
     skipAuthorization,
   });
 
@@ -1879,7 +1866,6 @@ export async function calculateModifiedPricing(
           // branches cannot price a night differently.
           groupDiscount,
           seasonYear,
-          yearEndMonth,
           skipAuthorization,
           subscriptionLockoutMode,
         });

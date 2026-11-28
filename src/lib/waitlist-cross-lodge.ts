@@ -150,7 +150,6 @@ export async function quoteWaitlistEntryAtLodge(
       ),
       seasons: toSeasonRateData(seasons),
       seasonYear: seasonYearOfStoredDate(entry.checkIn, yearEndMonth),
-      yearEndMonth,
       groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
       // Finding 2 (privacy re-review of MG3 #2308). An unattended offer sweep
       // that DISCARDS the refusal entirely (see the catch below), so there is

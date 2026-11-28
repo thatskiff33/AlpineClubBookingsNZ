@@ -257,7 +257,6 @@ export async function POST(req: NextRequest) {
       seasons: seasonData,
       groupDiscount,
       seasonYear: seasonYearOfStoredDate(checkIn, yearEndMonth),
-      yearEndMonth,
       skipAuthorization: isAuthorizedOnBehalf,
     });
 

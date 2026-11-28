@@ -10,8 +10,8 @@
   the season from that same setting.
 
   For a club whose year ends in December, the "membership subscription not
-  paid" and membership-type refusals now name a one-year season as "2026"
-  rather than "2026/2027", matching the season names elsewhere.
+  paid" refusal now names a one-year season as "2026" rather than
+  "2026/2027", matching the season names elsewhere.
 
   Clubs whose year ends in March, which is every club running today, see no
   change.

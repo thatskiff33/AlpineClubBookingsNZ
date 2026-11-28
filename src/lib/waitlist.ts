@@ -197,7 +197,6 @@ async function repriceWaitlistCandidate(
       seasons: seasonRateData,
       groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
       seasonYear: seasonYearOfStoredDate(candidate.checkIn, yearEndMonth),
-      yearEndMonth,
       subscriptionLockoutMode,
       // Finding 2 (privacy re-review of MG3 #2308). An unattended sweep with no
       // member on the other end of the response: there is nobody to collapse the

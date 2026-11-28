@@ -870,7 +870,6 @@ export async function joinGroupBookingAsMember(
     ownerMemberId: sessionUserId,
     guests,
     seasonYear,
-    yearEndMonth,
   });
 
   // #2543 — the club's three-way lockout policy, resolved once for this join so
@@ -1681,7 +1680,6 @@ export async function verifyAndCreateNonMemberJoin(
     checkIn,
     checkOut,
     seasonYear: seasonYearOfStoredDate(checkIn, yearEndMonth),
-    yearEndMonth,
     guests: toGuestPricingInputs(guests),
     seasons: toSeasonRateData(seasons),
     groupDiscount: toGroupDiscountConfig(gds),

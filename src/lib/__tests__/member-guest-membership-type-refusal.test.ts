@@ -162,7 +162,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       ownerMemberId: BOOKER,
       guests: [guest(BOOKER), guest(OUTSIDER)],
       seasonYear: SEASON,
-      yearEndMonth: 3,
     });
 
     expect(error.message).toBe(MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE);
@@ -184,7 +183,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       ownerMemberId: BOOKER,
       guests: [guest(OUTSIDER)],
       seasonYear: SEASON,
-      yearEndMonth: 3,
     });
 
     const body = getMembershipTypeBookingPolicyErrorBody(error);
@@ -223,7 +221,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       ownerMemberId: BOOKER,
       guests: [guest(OUTSIDER)],
       seasonYear: SEASON,
-      yearEndMonth: 3,
     });
     expect(error.message).toBe(MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE);
     expect(JSON.stringify(getMembershipTypeBookingPolicyErrorBody(error))).not.toContain(
@@ -243,7 +240,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       ownerMemberId: BOOKER,
       guests: [guest(CHILD)],
       seasonYear: SEASON,
-      yearEndMonth: 3,
     });
 
     expect(error.message).toContain("Kit Booker");
@@ -264,7 +260,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       guests: [guest(OUTSIDER)],
       seasonYear: SEASON,
       skipAuthorization: true,
-      yearEndMonth: 3,
     });
     expect(error.message).toContain("Dana Doe");
     expect(error.crossFamilyMemberIds).toBeUndefined();
@@ -329,7 +324,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       ownerMemberId: BOOKER,
       guests: [guest(CHILD), guest(OUTSIDER)],
       seasonYear: SEASON,
-      yearEndMonth: 3,
     });
     expect(error.message).toBe(MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE);
     expect(error.message).not.toContain("Kit");
@@ -349,7 +343,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       ownerMemberId: BOOKER,
       guests: [],
       seasonYear: SEASON,
-      yearEndMonth: 3,
     });
     expect(error.message).toContain("2026/2027");
     expect(error.message).toContain(BLOCKING_TYPE.name);
@@ -374,7 +367,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       ownerMemberId: BOOKER,
       guests: [guest(OUTSIDER)],
       seasonYear: SEASON,
-      yearEndMonth: 3,
     });
     expect({
       message: error.message,
@@ -404,7 +396,6 @@ describe("D-8 leak 5 — the membership-type booking policy refusal", () => {
       ownerMemberId: BOOKER,
       guests: [guest(OUTSIDER)],
       seasonYear: SEASON,
-      yearEndMonth: 3,
     });
     const asHandlerInput: { crossFamilyMemberIds?: readonly string[] } = error;
     expect(asHandlerInput.crossFamilyMemberIds).toEqual([OUTSIDER]);

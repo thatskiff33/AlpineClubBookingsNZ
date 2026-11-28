@@ -680,14 +680,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // #2543 — the club's three-way subscription-lockout policy, resolved ONCE for
-  // this request so the owner gate, the member-guest gate and the paid-up-adult
-  // requirement below cannot branch on different answers if an admin saves the
-  // setting mid-request.
+  // #2543 — the lockout policy and (#5259) the stay's season under the club's RESOLVED
+  // year-end, each read ONCE so no gate below can branch on a different answer.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
-  // The booking's membership season, from the club's RESOLVED year-end (#5259),
-  // once: the owner gate, the membership-type policy and the paid-up-adult
-  // requirement below all judge the same season.
   const yearEndMonth = await clubFinancialYearEndMonth();
   const seasonYear = seasonYearOfStoredDate(checkIn, yearEndMonth);
 
@@ -711,10 +706,9 @@ export async function POST(request: NextRequest) {
         where: { memberId: effectiveMemberId, seasonYear },
         orderBy: { updatedAt: "desc" },
       });
-      const seasonDisplay = seasonSlashLabel(seasonYear, yearEndMonth);
       return NextResponse.json(
         {
-          error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,
+          error: `Your membership subscription for the ${seasonSlashLabel(seasonYear, yearEndMonth)} season is not paid. Please contact the club to arrange payment before booking.`,
           code: "SUBSCRIPTION_REQUIRED",
           invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
           invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
@@ -1093,7 +1087,6 @@ export async function POST(request: NextRequest) {
         ownerMemberId: effectiveMemberId,
         guests: party,
         seasonYear,
-        yearEndMonth,
         // Finding 2 (privacy re-review of MG3 #2308).
         skipAuthorization: isAuthorizedOnBehalf,
       });
@@ -1132,8 +1125,7 @@ export async function POST(request: NextRequest) {
       try {
         unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
           bookingMemberId: effectiveMemberId,
-          checkIn,
-          yearEndMonth,
+          checkIn, yearEndMonth,
           guests: party,
         });
       } catch (error) {
@@ -1437,8 +1429,7 @@ export async function POST(request: NextRequest) {
       groupBookingId: null,
       lodgeId: bookingLodgeId,
       checkIn,
-      checkOut,
-      seasonYear,
+      checkOut, seasonYear,
       guests: guestInputs,
     });
     if (hostingViolation && isAuthorizedOnBehalf) {
@@ -1535,8 +1526,7 @@ export async function POST(request: NextRequest) {
         groupDiscount,
         // #2543 — the mode resolved once above, handed to pricing so no path in
         // this request can price under a regime the gates did not branch on.
-        subscriptionLockoutMode,
-        yearEndMonth,
+        subscriptionLockoutMode, yearEndMonth,
         guestDietarySeeding,
         memberReviewJustification,
         adultMemberHostingReason,
@@ -1670,8 +1660,7 @@ export async function POST(request: NextRequest) {
       applyCreditCents: parsed.data.applyCreditCents,
       groupDiscount,
       // #2543 — see the draft branch above.
-      subscriptionLockoutMode,
-      yearEndMonth,
+      subscriptionLockoutMode, yearEndMonth,
       guestDietarySeeding,
       status,
       shouldBePending,
@@ -1715,8 +1704,7 @@ export async function POST(request: NextRequest) {
         requestedRoomId,
         groupDiscount,
         // #2543 — see the draft branch above.
-        subscriptionLockoutMode,
-        yearEndMonth,
+        subscriptionLockoutMode, yearEndMonth,
         guestDietarySeeding,
         memberReviewJustification,
         adultMemberHostingReason,

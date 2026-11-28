@@ -326,7 +326,6 @@ describe("the price in cents (#2543)", () => {
         guests,
         seasons: seasonRates,
         seasonYear: 2026,
-        yearEndMonth: 3,
       },
     );
 
@@ -351,7 +350,6 @@ describe("the price in cents (#2543)", () => {
           guests,
           seasons: seasonRates,
           seasonYear: 2026,
-          yearEndMonth: 3,
         },
       );
 
@@ -371,7 +369,6 @@ describe("the price in cents (#2543)", () => {
       guests,
       seasons: seasonRates,
       seasonYear: 2026,
-      yearEndMonth: 3,
     };
 
     mocks.peekSubscriptionLockoutMode.mockResolvedValue("HARD_BLOCK");
@@ -443,7 +440,6 @@ describe("the group discount treats a repriced member as a real non-member (#254
         seasons: seasonRates,
         groupDiscount,
         seasonYear: 2026,
-        yearEndMonth: 3,
       },
     );
 
@@ -482,7 +478,6 @@ describe("the group discount treats a repriced member as a real non-member (#254
         seasons: seasonRates,
         groupDiscount,
         seasonYear: 2026,
-        yearEndMonth: 3,
       },
     );
 
@@ -536,7 +531,6 @@ describe("the mode is taken from the caller when the caller holds one (#2543)", 
         seasons: seasonRates,
         seasonYear: 2026,
         subscriptionLockoutMode: "NON_MEMBER_PRICING",
-        yearEndMonth: 3,
       },
     );
 

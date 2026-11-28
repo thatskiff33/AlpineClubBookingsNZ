@@ -1002,7 +1002,7 @@ function membershipPolicyRefusal() {
       membershipTypeName: "Social",
       bookingBehavior: "BLOCKED" as never,
     },
-  ], 3);
+  ]);
 }
 
 describe("#3029 P2 — the blocked-claim fallback only claims the member it was about", () => {

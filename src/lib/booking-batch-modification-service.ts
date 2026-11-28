@@ -291,11 +291,9 @@ export type BatchModificationResponse = BatchModificationSettlementFacts & {
  *
  *  - the member-guest add policy, whose own module header says it must be read
  *    before the caller opens its transaction;
- *  - the club's subscription-lockout mode, which `INV-LOCK-004` names explicitly
- *    as a reader to resolve first and pass in as a value, because it can refresh
- *    the financial-year configuration from Xero;
- *  - the club's financial year-end month (#5259), for the same reason: the
- *    planner places check-ins in membership seasons with it;
+ *  - the club's subscription-lockout mode and (#5259) its financial year-end, which
+ *    `INV-LOCK-004` names as readers to resolve first and pass in as values,
+ *    because either can reach Xero for the financial-year configuration;
  *  - the Xero lock dates, which on a cold cache is a live HTTPS request with a
  *    possible OAuth refresh.
  *
@@ -306,11 +304,6 @@ export type BatchModificationResponse = BatchModificationSettlementFacts & {
 interface BatchModificationPreparation {
   readonly memberGuestPolicy: Awaited<ReturnType<typeof loadMemberGuestAddPolicy>>;
   readonly subscriptionLockoutMode: SubscriptionLockoutMode;
-  /**
-   * #5259: the club's resolved financial year-end month, which places every
-   * check-in the planner judges in its membership season. Out here because
-   * resolving it is a settings read that can reach Xero.
-   */
   readonly yearEndMonth: number;
   readonly xeroLockDates: XeroLockDateFacts;
   /**
@@ -391,9 +384,7 @@ async function prepareBookingBatchModification(options: {
       loadMemberGuestAddPolicy(),
       resolveSubscriptionLockoutMode(),
       clubFinancialYearEndMonth(),
-      resolveXeroLockDateFacts(options.candidateCheckIns, {
-        audience: options.audience,
-      }),
+      resolveXeroLockDateFacts(options.candidateCheckIns, { audience: options.audience }),
       resolveBookingGuestDietarySeeding(),
       resolveBookingMoneyPostingContext(),
     ]);
@@ -798,9 +789,7 @@ export async function modifyBookingBatch({
     // #1729's narrow guard, still before the transaction on this path.
     ordinaryGuard.decide(preparation.xeroLockDates);
   }
-  const memberGuestPolicy = preparation.memberGuestPolicy;
-  const subscriptionLockoutMode = preparation.subscriptionLockoutMode;
-  const yearEndMonth = preparation.yearEndMonth;
+  const { memberGuestPolicy, subscriptionLockoutMode, yearEndMonth } = preparation;
   // #3123 — the caller's club day, encoded at UTC midnight so it shares a frame
   // with the stored `@db.Date` columns the edit policy compares against
   // (`INV-DATE-026`). The day itself is a REQUIRED parameter; its docblock says
@@ -1077,8 +1066,7 @@ export async function modifyBookingBatch({
       // the planner's refusals and the paid-up-adult requirement branch on the
       // same mode `modify-quote` previewed, and no settings read happens under
       // the global + per-lodge locks this transaction holds.
-      subscriptionLockoutMode,
-      yearEndMonth,
+      subscriptionLockoutMode, yearEndMonth,
     });
     const guestNameUpdates = resolveGuestNameUpdates({
       booking,
@@ -1182,8 +1170,7 @@ export async function modifyBookingBatch({
           removeGuestIds: input.removeGuestIds,
           guestsForPricing: guestPlan.guestsForPricing,
           // #2543 — see the `prepareGuestPlan` call above.
-          subscriptionLockoutMode,
-          yearEndMonth,
+          subscriptionLockoutMode, yearEndMonth,
           // Finding 2 (privacy re-review of MG3 #2308). #2526: read the SAME
           // answer the guest plan used, so a policy-exception approval (which
           // borrows ADMIN only for the reviewed minimum-stay override) prices

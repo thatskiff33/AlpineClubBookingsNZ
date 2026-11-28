@@ -712,8 +712,7 @@ export async function POST(
   // read is cached but can reach Xero for the organisation's accounting year
   // when the Xero module is on.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
-  // The club's RESOLVED year-end (#5259), once: every season this preview
-  // judges (the stored booking's, the edit's new dates') is placed with it.
+  // #5259: the club's RESOLVED year-end, once, for every season this preview judges.
   const yearEndMonth = await clubFinancialYearEndMonth();
 
   let otherLodgeElection: OtherLodgeRateElection;
@@ -1310,7 +1309,6 @@ export async function POST(
       ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
-      yearEndMonth,
       // Finding 2 (privacy re-review of MG3 #2308). `guestsForPricing` is the
       // C1-marked party, so a beyond-family member guest already on the booking
       // collapses here without a second boundary read.
@@ -1747,7 +1745,6 @@ export async function POST(
           seasons: seasonRateData,
           groupDiscount,
           seasonYear,
-          yearEndMonth,
           subscriptionLockoutMode,
         }),
         guestsForPricing,

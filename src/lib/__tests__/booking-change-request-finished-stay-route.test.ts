@@ -352,7 +352,7 @@ describe("PATCH booking change request — finished stay (#3750)", () => {
             membershipTypeName: "Social",
             bookingBehavior: "BLOCKED",
           } as never,
-        ], 3),
+        ]),
       403,
     ],
     [

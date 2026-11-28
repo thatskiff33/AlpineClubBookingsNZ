@@ -331,7 +331,6 @@ export async function POST(request: NextRequest) {
       seasons: seasonData,
       groupDiscount,
       seasonYear,
-      yearEndMonth,
       subscriptionLockoutMode,
     });
     // Deferred non-member "guest portion" (#2003): when a split creates a
@@ -350,7 +349,6 @@ export async function POST(request: NextRequest) {
       seasons: seasonData,
       groupDiscount,
       seasonYear,
-      yearEndMonth,
     });
     const deferredGuestPortionCents = deferredPortion?.totalPriceCents ?? null;
     const availableCreditCents = await getMemberCreditBalance(effectiveMemberId);
