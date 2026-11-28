@@ -81,6 +81,35 @@ function incidentPolicyChanged(
 }
 
 /**
+ * The bookings a material policy change re-queues: accepted with a night still
+ * ahead, or carrying an active incident.
+ *
+ * Exported because the kiosk relies on it (#5239): a policy window — the Group
+ * Trip scope off, or the lodge out of `ENFORCED` — is a time when a sibling's
+ * change queues nothing, and only bookings in this set are re-checked when it
+ * ends. So the kiosk shows sibling cover only for cards this predicate matches,
+ * read through this one definition rather than a copy of it.
+ *
+ * `today` is the club's today as its date-only instant: `Booking.checkOut` is
+ * `@db.Date`, so the bound is the UTC-midnight encoding of a calendar day, not
+ * an instant boundary.
+ */
+export function hostingPolicyReconciliationCandidateWhere(
+  today: Date,
+): Prisma.BookingWhereInput {
+  return {
+    OR: [
+      {
+        deletedAt: null,
+        status: { in: [...HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES] },
+        checkOut: { gt: today },
+      },
+      { hostingCoverageIncidents: { some: { resolvedAt: null } } },
+    ],
+  };
+}
+
+/**
  * Durably schedule every accepted booking, plus every booking with a currently
  * active incident, whose effective enforcement mode or host-scope set changed
  * in the policy mutation that just ran.
@@ -130,18 +159,9 @@ export async function enqueueActiveHostingIncidentPolicyReconciliation(
   })) as HostingPolicyReconciliationSnapshot[];
 
   const candidates = await db.booking.findMany({
-    where: {
-      OR: [
-        {
-          deletedAt: null,
-          status: { in: [...HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES] },
-          // `Booking.checkOut` is `@db.Date`, so the bound is the UTC-midnight
-          // encoding of a calendar day, not an instant boundary.
-          checkOut: { gt: dateOnlyInstantOf(todayDateOnly) },
-        },
-        { hostingCoverageIncidents: { some: { resolvedAt: null } } },
-      ],
-    },
+    where: hostingPolicyReconciliationCandidateWhere(
+      dateOnlyInstantOf(todayDateOnly),
+    ),
     orderBy: [{ checkIn: "asc" }, { id: "asc" }],
     select: {
       id: true,

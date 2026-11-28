@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest"
 import type { ReactNode } from "react"
-import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render"
+import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-season-render"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { MemberBulkSubscriptionCategoryDialog } from "../member-bulk-subscription-category-dialog"
 

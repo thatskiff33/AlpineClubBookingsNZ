@@ -1,3 +1,4 @@
+import { getAppBaseUrl } from "@/lib/app-url";
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { FINANCE_SYNC_RUN_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-reports";
@@ -8,11 +9,8 @@ import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-req
 
 const FINANCE_REVALIDATE_PATHS = ["/finance"] as const;
 
-function buildFinanceRedirectUrl(
-  request: NextRequest,
-  params: Record<string, string>
-) {
-  const baseUrl = process.env.NEXTAUTH_URL || request.url;
+function buildFinanceRedirectUrl(params: Record<string, string>) {
+  const baseUrl = getAppBaseUrl();
   const url = new URL("/finance", baseUrl);
 
   for (const [key, value] of Object.entries(params)) {
@@ -35,7 +33,7 @@ export async function POST(request: NextRequest) {
 
   if (!authResult.ok) {
     if (viaConnection) return authResult.response;
-    const baseUrl = process.env.NEXTAUTH_URL || request.url;
+    const baseUrl = getAppBaseUrl();
     const destination =
       authResult.response.status === 401
         ? new URL("/login", baseUrl)
@@ -62,7 +60,7 @@ export async function POST(request: NextRequest) {
         );
       }
       return NextResponse.redirect(
-        buildFinanceRedirectUrl(request, { sync: "running" }),
+        buildFinanceRedirectUrl({ sync: "running" }),
         303
       );
     }
@@ -91,7 +89,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.redirect(
-      buildFinanceRedirectUrl(request, { sync }),
+      buildFinanceRedirectUrl({ sync }),
       303
     );
   } catch (error) {
@@ -105,7 +103,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.redirect(
-      buildFinanceRedirectUrl(request, {
+      buildFinanceRedirectUrl({
         sync: "failed",
       }),
       303
