@@ -66,7 +66,8 @@
  * confirm-payment route, the confirm-pending job's saved-card charge, and
  * (#5433, the card recovery doors) the create-payment-intent and payment-link
  * recoveries of a capture whose webhook was missed and the charge-saved-method
- * route. Before that change those three sent none, and a webhook arriving after
+ * route, an officer's or an authorised cron call (owner decision D12, 28 Nov
+ * 2026). Before that change those three sent none, and a webhook arriving after
  * their settle found the booking already paid and sent none either. An
  * officer's confirm-pending-guests sends only on the officer's choice and
  * records none, as before (#5470). The

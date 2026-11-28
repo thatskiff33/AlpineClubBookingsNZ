@@ -655,12 +655,15 @@ you want both reworded; editing only one leaves the other on its built-in text.
 >   app, found when the member comes back to the pay step;
 > - the same for a payment made through the booking's payment link, found
 >   when the link is used again;
-> - an officer's charge of a saved card (the charge-saved-method route).
+> - a charge of a saved card through the charge-saved-method route, whether
+>   an officer or an authorised scheduled call starts it (owner decision,
+>   28 Nov 2026).
 >
 > Before, these sent nothing, and Stripe's notice arriving afterwards found the
 > booking already paid and sent nothing either, so the member was told only
-> when Stripe's notice happened to confirm the booking first. Now the member gets one confirmation, whichever of these or Stripe's notice
-> confirms the booking first. If the app is interrupted after the payment is
+> when Stripe's notice happened to confirm the booking first. Now the member
+> gets one confirmation, whichever of these or Stripe's notice confirms the
+> booking first. If the app is interrupted after the payment is
 > saved, a later run of the email retry job (every 30 minutes) sends it, until
 > the end of the check-in day or for seven days after the payment if that
 > comes first, and officers get **Booking confirmation not sent** when it could

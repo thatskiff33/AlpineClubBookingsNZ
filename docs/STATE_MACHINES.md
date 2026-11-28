@@ -4563,17 +4563,25 @@ the kind `booking-confirmed`. Every card door that confirms a booking by itself
 asks the settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
 confirm-payment route and the confirm-pending job's saved-card charge (PR 3),
 and the create-payment-intent and payment-link recoveries of a capture whose
-webhook was missed and the charge-saved-method route (the card recovery doors).
-Before that change those three sent no confirmation, and the webhook arriving
-after their settle found the booking already paid and sent none either.
+webhook was missed and the charge-saved-method route, whether an officer or an
+authorised cron call starts it (the card recovery doors; owner decision D12,
+28 Nov 2026, for the charge-saved-method route). Before that change those three
+sent no confirmation, and the webhook arriving after their settle found the
+booking already paid and sent none either.
 `settleAndPostBookingReceipts` writes the marker last in its transaction when
 the settle body returns a fresh `paid`, so a replayed settle that finds the
 booking already paid writes none. A booking id that cannot key a marker is an
-error log, never a throw: the payment settles and no confirmation is recorded,
-and the door sends it once, unkeyed, as before #5433. An officer's
-confirm-pending-guests sends one only on the officer's choice and records none,
-as before (#5470). After its commit each door runs the one sequence
-`queueInvoiceAndDeliverPaidConfirmation`: it queues the booking's Xero invoice
+error log, never a throw: the payment settles, no confirmation is recorded, and
+the settle hands back `paidConfirmation: null`, so the door sends it once,
+unkeyed (unreachable with today's ids). For the three PR 3 doors that is what
+they sent before #5433; for the three card recovery doors it is new, as they
+sent nothing before. A caller that did not ask gets no `paidConfirmation` at
+all, and the after-commit sequence then logs an error and sends nothing, so a
+door that forgets the flag never sends a confirmation the sweep cannot see. An
+officer's confirm-pending-guests sends one only on the officer's choice and
+records none, as before (#5470). After its commit each door runs the one
+sequence `queueInvoiceAndDeliverPaidConfirmation`, as does the confirm-pending
+job's zero-balance confirmation (below): it queues the booking's Xero invoice
 first and then delivers the marker (the invoice queue is one outbox row, then
 an inline outbox kick when Xero is connected; no job re-queues a missed one, so
 it goes first). A door whose settle found the booking already paid, or a
