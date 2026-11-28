@@ -2473,6 +2473,10 @@ describe("the registry is inert", () => {
     "src/lib/email-templates/admin-booking.ts": "C10: booking alert buttons use adminHref",
     "src/lib/email/admin-alerts-booking.ts": "C10: booking review links use adminHref",
     "src/lib/unpaid-finished-stays-hrefs.ts": "C10: the unpaid-stays links are adminHref",
+    "src/lib/email/admin-alerts-email-complaint.ts":
+      "#5469: the complaint alert's Email Deliverability link is adminHref",
+    "src/lib/email-message-complaint-alert.ts":
+      "#5469: the complaint alert's preview sample of that link is adminHref",
     "src/lib/__tests__/booking-requests-stub-redirect.test.ts":
       "C10: pins each stub's target and buildBookingRequestsHref in both switch states",
     "src/lib/__tests__/admin-page-headings.test.ts":

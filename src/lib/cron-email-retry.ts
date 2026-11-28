@@ -13,12 +13,14 @@ import {
   REPLAYABLE_FAILED_EMAIL_WHERE,
 } from "@/lib/email/retry-selection";
 import { retireReplayableEmailRow } from "@/lib/email/retire-replayable";
+import { sentEmailIdsFromResult } from "@/lib/email/provider-message-id";
 import { replayStillWanted } from "@/lib/email/retry-still-wanted";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
 } from "@/lib/environment-delivery-policy";
 import { getActiveEmailSuppression } from "@/lib/email-suppression";
+import { suppressedEmailErrorMessage } from "@/lib/email/suppressed-email-message";
 import {
   ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES,
   resolveBookingEmailGate,
@@ -86,6 +88,9 @@ async function retireUnverifiableBookingEmail(params: {
     params.logMessage,
   );
 }
+
+/** #5469: the retry job's suppression read failed; the row waits for the next run. */
+const SUPPRESSION_UNREADABLE: unique symbol = Symbol("suppression-unreadable");
 
 /**
  * A replay the provider refused or the transport failed. The row goes back to
@@ -163,10 +168,11 @@ async function recordReplayFailure({ emailLog, newAttempts, claimedAt, err }: {
  * EMAIL_RETRY_MAX_ATTEMPTS and re-sends.
  * Token-bearing templates are intentionally excluded because their HTML bodies
  * are not retained in EmailLog.
- * SES/SNS bounce and complaint feedback marks undeliverable messages as
- * BOUNCED, so they are excluded from retry recovery. Suppression is
- * re-checked per row before each retry send (F26, #1885) because a FAILED
- * row can predate the suppression that SNS feedback created.
+ * A bounce report marks only the message it names as BOUNCED, and a complaint
+ * marks none (#5469, `INV-INT-044`), so a bounced row is excluded from retry
+ * recovery. Other rows to the address keep their status: suppression is re-checked per row before
+ * each retry send (F26, #1885), and that check, not a status rewrite, is what
+ * stops a FAILED row to an address SNS feedback has since suppressed.
  * Each row is claimed (FAILED -> QUEUED) with a guarded update before the
  * send so an interrupted or concurrent run can never deliver the same email
  * twice (F33, #1885).
@@ -179,6 +185,8 @@ export async function retryFailedEmails(): Promise<{
   retried: number;
   succeeded: number;
   failed: number;
+  /** #5469: rows left for the next run because their suppression could not be read. */
+  skipped: number;
 }> {
   /*
     Environment-safety boundary (#3035, ENV-SAFETY 2; epic #2986). INV-CONFIG-004.
@@ -218,7 +226,7 @@ export async function retryFailedEmails(): Promise<{
       { job: "retryFailedEmails" },
       "Skipped the email retry run: this installation is not the club's live site, so no message was replayed and no provider was contacted. Every failed row is left untouched",
     );
-    return { retried: 0, succeeded: 0, failed: 0 };
+    return { retried: 0, succeeded: 0, failed: 0, skipped: 0 };
   }
   if (delivery.kind !== "allow") {
     /*
@@ -297,6 +305,7 @@ export async function retryFailedEmails(): Promise<{
   let retried = 0;
   let succeeded = 0;
   let failed = 0;
+  let skipped = 0;
 
   for (const emailLog of failedEmails) {
     /*
@@ -325,7 +334,7 @@ export async function retryFailedEmails(): Promise<{
         `Email retry stopped part-way: ${describeDeliveryDecision(stillPermitted)}`,
       );
     }
-    const { transporter } = await getEmailTransporter(stillPermitted.clearance);
+    const { transporter, mailService } = await getEmailTransporter(stillPermitted.clearance);
 
     const usesBookingRetryBody = emailLog.bookingRetryHtmlBody != null;
     // Retained HTML, rendered by whichever process first attempted this
@@ -334,22 +343,13 @@ export async function retryFailedEmails(): Promise<{
     // re-theming a replay would change what the member is shown relative to
     // what the club approved at send time.
     let retryHtml = emailLog.bookingRetryHtmlBody ?? emailLog.htmlBody!;
-    // F26 (#1885): a FAILED row can be created before an SNS bounce/complaint
-    // suppresses the recipient (the pre-send check in core.ts passed, then the
-    // SMTP send failed after the suppression landed). Re-check here so a
-    // suppressed recipient is never re-delivered. Mirrors core.ts: on check
-    // failure proceed (fail-open, same as the pre-send path); on an active
-    // suppression mark the row BOUNCED with the same reason string and drop
-    // the retained body.
-    const activeSuppression = await getActiveEmailSuppression(
-      emailLog.to,
-    ).catch((err) => {
-      logger.error(
-        { err, to: emailLog.to, templateName: emailLog.templateName },
-        "Failed to check email suppression state before retry",
-      );
-      return null;
+    // F26 (#1885): re-check suppression, which can postdate the row; #5469: a
+    // failed read skips the row, unclaimed and counted, for the next run.
+    const activeSuppression = await getActiveEmailSuppression(emailLog.to).catch((err: unknown): typeof SUPPRESSION_UNREADABLE => {
+      logger.error({ err, emailLogId: emailLog.id }, "Failed to check email suppression state before retry; left for the next run");
+      return SUPPRESSION_UNREADABLE;
     });
+    if (activeSuppression === SUPPRESSION_UNREADABLE) { skipped++; continue; }
 
     if (activeSuppression) {
       await prisma.emailLog
@@ -359,7 +359,7 @@ export async function retryFailedEmails(): Promise<{
             status: "BOUNCED",
             htmlBody: null,
             bookingRetryHtmlBody: null,
-            errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
+            errorMessage: suppressedEmailErrorMessage(activeSuppression.reason),
             // #3035: the recipient's address is the reason now, not the
             // environment. See the failure branch below on why the block reason
             // must not persist past the thing it described.
@@ -660,7 +660,7 @@ export async function retryFailedEmails(): Promise<{
         data: {
           status: "SENT",
           sentAt: new Date(),
-          messageId: result.messageId || null,
+          ...sentEmailIdsFromResult(mailService, result), // #5469
           errorMessage: null,
           // #3035: the row is delivered, so nothing about it is being withheld.
           // Leaving a stale `deliveryBlockReason` here would keep a SENT message
@@ -678,5 +678,5 @@ export async function retryFailedEmails(): Promise<{
     succeeded++;
   }
 
-  return { retried, succeeded, failed };
+  return { retried, succeeded, failed, skipped };
 }
