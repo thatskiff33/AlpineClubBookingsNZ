@@ -1,5 +1,6 @@
 import type { MaintenanceReportSource } from "@prisma/client";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/prisma";
 
@@ -39,8 +40,6 @@ export type MaintenanceAlertInput = {
   reportedBy: string;
   source: MaintenanceReportSource;
   hasPhoto: boolean;
-  /** Used only to recover an origin when NEXTAUTH_URL is unset. */
-  request?: { nextUrl: { origin: string } };
 };
 
 export type MaintenanceAlertPayload = {
@@ -67,7 +66,7 @@ export async function resolveMaintenanceAlertPayload(
     },
   });
 
-  const baseUrl = getAppBaseUrl(input.request?.nextUrl.origin);
+  const baseUrl = getAppBaseUrl();
 
   return {
     lodgeName: input.lodgeName,
@@ -84,7 +83,7 @@ export async function resolveMaintenanceAlertPayload(
     // Built from our own origin and the report id only. A reporter cannot put a
     // link of their choosing in front of an officer, which is why the template
     // renders this with `sameOrigin: true`.
-    maintenanceReportUrl: `${baseUrl}/admin/maintenance-reports?report=${encodeURIComponent(
+    maintenanceReportUrl: `${baseUrl}${adminHref("maintenance-reports")}?report=${encodeURIComponent(
       input.reportId,
     )}`,
   };

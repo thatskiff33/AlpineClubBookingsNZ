@@ -64,6 +64,7 @@ import {
 } from "@/lib/organiser-child-refund";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
+import { xeroBilledIncrease } from "@/lib/primary-invoice-bills-increase";
 
 export type PaymentAdjustmentResult = {
   refundAmountCents: number;
@@ -71,7 +72,7 @@ export type PaymentAdjustmentResult = {
   /**
    * The plain figure the EMAILS, the response bodies and the Xero leg read. On
    * the card arm it equals `additionalAsk.amountCents`; where there is no card
-   * it is the supplementary invoice's own delta, which supersedes nothing.
+   * it is what Xero bills (`xeroBilledIncrease`), superseding nothing.
    */
   additionalAmountCents: number;
   /**
@@ -109,6 +110,7 @@ export type PaymentAdjustmentResult = {
   foldedWaitingAsks: FoldedWaitingAsks;
   /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
   settledAgainstPrimaryInvoice: boolean;
+  primaryInvoiceBillsIncrease: boolean; // #5288 (`INV-PAY-163`): the primary invoice the door raises bills it
   /**
    * Always 0. An ordinary edit no longer adds a late-notice fee to an unpaid
    * booking's amount owed (owner decision, 10 Nov 2026). The field stays so
@@ -290,8 +292,7 @@ export async function applyPaymentAdjustments(
           ? 0
           : Math.abs(netAmountCents)
       : 0;
-  const xeroAdditionalAmountCents =
-    hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
+  const { xeroAdditionalAmountCents, primaryInvoiceBillsIncrease } = await xeroBilledIncrease(tx, booking, { netAmountCents, priceDiffCents, changeFeeCents, hasSucceededPayment, hasIssuedXeroInvoice });
   // #4299 (`INV-PAY-148`): the organiser is invoiced for the increase, so the
   // joiner is asked for nothing; the emails and responses say who was billed.
   const billedToOrganiserCents = organiserBilling ? xeroAdditionalAmountCents : 0;
@@ -363,8 +364,8 @@ export async function applyPaymentAdjustments(
       // resulting shortfall visible instead of silent.
       //
       // The Xero arm below is deliberately untouched: `xeroAdditionalAmountCents`
-      // sizes a SUPPLEMENTARY INVOICE for THIS edit, which supersedes nothing and
-      // is collected alongside whatever came before it.
+      // sizes THIS edit's supplementary invoice, or (#5288) what the new primary
+      // invoice shows as due; neither supersedes an ask (`xeroBilledIncrease`).
       const organiserChargeRefusal = organiserChildChargeRefusal({ booking, netChargeCents: netAmountCents });
       if (organiserChargeRefusal) {
         // #3653: the organiser paid for this booking out of ONE combined card
@@ -438,6 +439,7 @@ export async function applyPaymentAdjustments(
     organiserChildRefund,
     foldedWaitingAsks,
     settledAgainstPrimaryInvoice,
+    primaryInvoiceBillsIncrease,
     changeFeeAddedToAmountOwedCents: 0,
     feeRecordedHereCents,
     billedToOrganiserCents,

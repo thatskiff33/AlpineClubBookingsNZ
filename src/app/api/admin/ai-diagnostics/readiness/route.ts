@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
+import { DIAGNOSTICS_READINESS_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-ai";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   getDiagnosticsReadiness,
   readDiagnosticsModuleFlag,
@@ -31,7 +32,7 @@ import {
 // tool cannot disagree about a club's module state. When the settings read fails,
 // `moduleEnabled` is null and the blocker is `module_flags_unreadable` rather than
 // `module_off` — a screen must render that as "could not check", never as "off".
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "support", level: "view" },
   });
@@ -41,5 +42,5 @@ export async function GET() {
     aiDiagnostics: await readDiagnosticsModuleFlag(),
   });
 
-  return NextResponse.json(readiness);
+  return connectionJson(request, readiness, DIAGNOSTICS_READINESS_CONNECTION_SHAPE);
 }

@@ -2296,8 +2296,25 @@ cash != bookingAmountOwedCents (INV-PAY-119), beyond what supplementary
 ```
 
 The marker is an admin-only `SETTLEMENT_MARKERS` event written in the settle's
-transaction; the alert follows the commit and is recorded on it once sent. The
-cancel arms (a cancelled booking's late cash, the late capacity cancel) size
+transaction; the alert follows the commit and is recorded on it once sent.
+
+A keep that moves the payment's refunded total and holds it at the
+bank-transfer floor (`INV-ADDPAY-021`) writes a second marker in the same
+transaction (#5289, `ib_kept_settle_floor_alert`), whose floor alert is owed
+until sent:
+
+```text
+written (alertClaimedAt null, alertSentAt null)
+  -> claimed by one sender (one conditional write on the marker as read:
+     unsent, unclaimed or claimed over 10 minutes ago)
+     -> sent -> alertSentAt set (terminal)
+     -> send failed -> claim given back (alertClaimedAt null)
+  -> a sender losing the claim sends nothing
+senders: the settle after its commit, a replay of the invoice event, and the
+  inbound cron for markers written over 10 minutes ago
+```
+
+The cancel arms (a cancelled booking's late cash, the late capacity cancel) size
 their credit from the receipt's figure, measure a mixed invoice against its
 total less the member's own applied credit, and alert on their own.
 
@@ -3487,8 +3504,10 @@ past its first attempt claimed within `replayInFlightWindowMs()` is the cron's
 ten inactivity timeouts, one per server reply after setup, never under
 `EMAIL_RETRY_BACKOFF_MS`; 20.5 minutes with the default timeouts, at most 110);
 an older such `QUEUED` row (a replay whose `SENT` write failed after the
-provider accepted it, or that died mid-send, which nothing moves on) counts as
-told, the same limit as a first attempt; any other `FAILED` row or a `BOUNCED`
+provider accepted it, or that died mid-send) counts as told, the same limit as
+a first attempt, and so does such a row once the stranded-email sweep has
+flagged it `UNCONFIRMED` at the retry ceiling (#5298, `INV-INT-043`), until an
+officer's Try again requeues it; any other `FAILED` row or a `BOUNCED`
 one is undeliverable; no row is never sent. Both the first attempt
 and the sweep read the row again after their send, because a send can return
 without reaching the member: a suppressed address is recorded `BOUNCED`, and
@@ -4171,6 +4190,7 @@ Known request statuses: `REQUESTED`, `APPROVED`, `REJECTED`, `WITHDRAWN`,
 Known participant statuses: `REQUESTED`, `PENDING_CONFIRMATION`, `DECLINED`,
 `APPROVED`, `REJECTED`, `CANCELLED`, `REJOINED`.
 Known lifecycle action statuses: `REQUESTED`, `APPROVED`, `REJECTED`.
+Known lifecycle actions: `ARCHIVE`, `DELETE`, `UNARCHIVE` (always `APPROVED`).
 
 A departure has an explicit calendar day (`Member.leavingDate`, #4457).
 Single and bulk deactivation, cancellation approval, archive approval and
@@ -4190,7 +4210,20 @@ admin approves -> local account/family changes -> Xero cancellation queued -> co
 admin rejects/withdraws -> request closed without lifecycle mutation
 archive/delete requested -> second-admin review -> approved/rejected
 delete approval -> eligibility re-check -> hard delete only when safe
+archived -> Full Admin unarchives (reason, one step) -> cancelled, not archived | 409 (deleted, not archived, pending archive or delete request) | 403 (not a Full Admin)
 ```
+
+Unarchive (#5540) is the archive's one reverse edge; cancellation has none.
+A Full Admin clears it from the member page's Lifecycle card
+(`POST /api/admin/members/[id]/lifecycle/unarchive`), under the member's
+`member-lifecycle:` key, with a guarded claim on `archivedAt`. Only the archive
+columns change: the member stays cancelled, inactive and login-off, keeps their
+leaving date, and gets back no family link. No email and no Xero call. It
+writes an `APPROVED` `UNARCHIVE` lifecycle row (the admin as requester and
+reviewer) and a `member_lifecycle.unarchived` audit row; the `ARCHIVE` row
+stays, so the page's Archive history shows every cycle. An `UNARCHIVE` row is
+never a request to review: the list API accepts only `ARCHIVE` and `DELETE`.
+See [`INV-LIFE-013`](invariants/membership-lifecycle.md#inv-life-013).
 
 Surfacing (#1938): ARCHIVE requests are reviewed on
 `/admin/membership-cancellations`; DELETE requests are reviewed in the
@@ -4428,8 +4461,46 @@ cron's next failure) does not count. Pinned by
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 
+A `QUEUED` row a crash strands is settled by the retry job (#5298,
+`INV-INT-043`). `EmailLog.handoverState` records how far the send got: the
+sender writes `PENDING` with the row, and moves it to `STARTED` with one guarded
+`updateMany` (id, `QUEUED`, `PENDING`, attempts 1) before it calls the mail server; a lost
+or failed claim sends nothing (`handover_lost`). Each other write the sender
+makes to its row is guarded on the row still being its own (`PENDING` before
+the claim, the claim's `STARTED` after it), so a sender that stalls past the
+threshold cannot undo the sweep. The retry job's own claim also writes
+`STARTED`, and its FAILED write after a failed replay is guarded on that claim. Null means the previous release wrote the row. Before it
+selects, each run takes up to 50 rows `QUEUED` for more than 30 minutes (or
+`replayInFlightWindowMs()` if longer) and less than 7 days, each with a write
+guarded on the row as read:
+
+- `PENDING` at attempts 1, body kept: back to `FAILED`, attempts unchanged, and
+  replayed with its usual checks by the same run, or a later one when 50 older
+  failures fill that run's batch;
+- `PENDING` at attempts 1, an alert its owner sends again when nobody got it
+  (`isOwnerRetriedAlertTemplate`: #4669's caller-retried alerts, and the
+  takeover alerts, whose owner takes a held claim with no sent marker over):
+  released to that owner, `FAILED`
+  at attempts 1 with no body, and not sent by the retry job. When another
+  recipient did get that alert, or the retry job holds another recipient's
+  copy, its owner has stopped, so
+  `sendUnmuteableAdminAlert` or `sendAdminAlertTo` fails the lost copy with its body kept before it
+  returns (`handLostHandoversToTheRetryJob`) and the retry job replays it;
+- `PENDING` at attempts 1, no body: `FAILED` at the ceiling, "never sent";
+- anything else (`STARTED`, null, or attempts above 1): `FAILED` at the
+  ceiling and `UNCONFIRMED`, never sent again automatically. A keyed email's
+  told rule (`keyed-email-state.ts`) reads it as it read the `QUEUED` row:
+  told.
+
+Both ceiling outcomes alert officers through the exhausted-retry alert, and the
+review queue marks an `UNCONFIRMED` row "May already have been delivered"; its
+**Try again** warns that the member may receive it twice. Pinned by
+`handover.test.ts` and `stranded-queued-email.realdb.test.ts`.
+
 ```text
 email queued -> send attempted -> sent
+queued, never handed over, stranded past the threshold -> failed (retried) or failed at the ceiling (no body)
+queued, hand-over started or unknown, stranded past the threshold -> failed at the ceiling, unconfirmed (officer decides)
 confirmed copy -> environment-safety suppression (terminal, no provider contacted)
 unconfirmed role or capture-in-production -> retryable failure carrying a block reason
 send failure -> retryable failed -> suppression + booking authority rechecked
@@ -4520,11 +4591,12 @@ claim (or two app instances' clocks differ by about that much) and a sweep
 claims the marker again. The member is still sent one email in both cases.
 
 **Stated limit, for every keyed notice.** A crash during the provider call
-itself leaves the member's row `QUEUED`. The retry cron selects `FAILED` rows
-only and nothing replays a `QUEUED` one, and the sweep's own send finds the
-row recorded and sends nothing. That is deliberate: for money-related notices
-a duplicate is worse than a missed email. The same holds for every inline
-send with an event key.
+itself leaves the member's row `QUEUED`, and the sweep's own send finds the
+row recorded and sends nothing. Since #5298 the stranded-email sweep
+(`INV-INT-043`) flags such a row to officers rather than send it again: for
+money-related notices a duplicate is worse than a missed email. A crash before
+the hand-over is sent again once. The same holds for every inline send with an
+event key.
 
 The confirm-pending cron's bump notices (#5407) are the first kinds on this
 mechanism: one marker for the member's email (`booking-bumped` or
@@ -4590,20 +4662,35 @@ still pending when the offer ends is retired, not sent, unless the retry job
 had already claimed it (Waitlist Lifecycle).
 
 A card payment's confirmation (#5433 PR 3, owner decisions D1, D7 and D8) is
-the kind `booking-confirmed`. The three callers that send it (the Stripe
-webhook, the confirm-payment route and the confirm-pending job's saved-card
-charge) ask the settle to record it (`owesPaidConfirmation`);
+the kind `booking-confirmed`. Every card door that confirms a booking by itself
+asks the settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
+confirm-payment route and the confirm-pending job's saved-card charge (PR 3),
+and the create-payment-intent and payment-link recoveries of a capture whose
+webhook was missed and the charge-saved-method route, whether an officer or an
+authorised cron call starts it (the card recovery doors; owner decision D12,
+28 Nov 2026, for the charge-saved-method route). Before that change those three
+sent no confirmation, and the webhook arriving after their settle found the
+booking already paid and sent none either.
 `settleAndPostBookingReceipts` writes the marker last in its transaction when
 the settle body returns a fresh `paid`, so a replayed settle that finds the
 booking already paid writes none. A booking id that cannot key a marker is an
-error log, never a throw: the payment settles and no confirmation is recorded.
-The other card doors (the charge-saved-method route, an officer's
-confirm-pending-guests, the create-payment-intent and payment-link recoveries)
-send no confirmation, or send one only on the officer's choice, and record none,
-as before. The caller queues the booking's Xero invoice first and then delivers
-the marker after its commit (the invoice queue is one outbox row, then an inline
-outbox kick when Xero is connected; no job re-queues a missed one, so it goes
-first). The wait is 30 minutes (a day after an officers' attempt that reached
+error log, never a throw: the payment settles, no confirmation is recorded, and
+the settle hands back `paidConfirmation: null`, so the door sends it once,
+unkeyed (unreachable with today's ids). For the three PR 3 doors that is what
+they sent before #5433; for the three card recovery doors it is new, as they
+sent nothing before. A caller that did not ask gets no `paidConfirmation` at
+all, and the after-commit sequence then logs an error and sends nothing, so a
+door that forgets the flag never sends a confirmation the sweep cannot see. An
+officer's confirm-pending-guests sends one only on the officer's choice and
+records none, as before (#5470). After its commit each door runs the one
+sequence `queueInvoiceAndDeliverPaidConfirmation`, as does the confirm-pending
+job's zero-balance confirmation (below): it queues the booking's Xero invoice
+first and then delivers the marker (the invoice queue is one outbox row, then
+an inline outbox kick when Xero is connected; no job re-queues a missed one, so
+it goes first). A door whose settle found the booking already paid, or a
+recovery that settled nothing because the payment was already recorded, sends
+nothing: the settle that marked the booking paid owns its confirmation. The
+wait is 30 minutes (a day after an officers' attempt that reached
 nobody), the event key `<bookingId>:<paidAtMs>`. The email is rendered from the
 booking as it stands then (`paid-booking-confirmation-email.ts`), stating any
 upward change since the payment that is not yet collected. It is cleared
@@ -5426,7 +5513,8 @@ The give-back and the first email row race on the `AlertCooldown` row's lock:
 whichever commits first wins, and the loser changes nothing, so the sweep never
 makes a second send (`INV-INT-042`). A claim taken before #5255 has no mark and
 is never swept. Known limits, not owner-accepted: an alert raised while every
-database write fails (#5297), and an email row a crash left `QUEUED` (#5298).
+database write fails (#5297). An email row a crash leaves `QUEUED` is settled
+by the stranded-email sweep (#5298, `INV-INT-043`).
 
 ### Shared Xero inbound run authority (#4432)
 
@@ -5847,10 +5935,28 @@ receipt's worker queues the note after it records the receipt's link (owner,
 8 Oct 2026: "Record receipt, then credit"). When the receipt is already on its
 way - a change's supplementary invoice for the capture, queued, sending or
 FAILED - the close queues nothing and takes the same waiting key; that
-invoice's worker runs the note step once it is sent (round 8):
+invoice's worker runs the note step once it is sent (round 8). Since #4381
+(`INV-PAY-144`) a late charge for a booking change on an invoiced booking is
+recorded by the keep's split instead, decided under the approval task's row
+and then the change's anchor:
 
 ```text
 close (no receipt in Xero) -> KEPT_LATE_CAPTURE_INVOICE PENDING, no note
+close (no receipt in Xero; a change capture on an invoiced booking, #4381) ->
+  an invoice bills the change -> ADDITIONAL_CAPTURE_RECEIPT PENDING, no note;
+    its worker runs the note step once the payment is linked
+  nothing bills it -> KEPT_LATE_CAPTURE_INVOICE PENDING, less what another
+    writer records
+  another writer records all of it (owner, 28 Nov 2026) ->
+    one invoice in Xero records the whole capture -> plan `now`: the bank
+      note PENDING with the close, crediting that invoice
+    the credit-release sweep holds it -> waiting key, nothing queued; the
+      note follows once an invoice names the capture (#4380), so it is
+      never recorded by hand (PAID_ANOTHER_WAY_REFUND_NOTE_AWAITS_CREDIT_RELEASE)
+    anything else -> nothing, plan `none`; the repair tool names it
+  the change's own unsent invoice names it -> KEPT_LATE_CAPTURE_INVOICE
+    PENDING for the gross capture, as before
+  no change readable -> nothing, plan `none`; the repair tool names it
 receipt worker: invoice + Stripe payment sent
   -> transaction 1 under the approval task's row: receipt link written
   -> transaction 2 under the same row: bank-transfer REFUND_CREDIT_NOTE
@@ -5860,7 +5966,8 @@ note step fails -> receipt row FAILED with its link standing; its retry finds
   the invoice and payment linked and runs only the note step
 receipt FAILED unsent -> no note; the repair tool's
   PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT retries (or queues) it,
-  and the note follows
+  and the note follows (#4381: a change capture's receipt never queued is its
+  KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO, applied by the close's split again)
 receipt FAILED after it may have reached Xero (payment linked, or the invoice
   call attempted) -> left FAILED for an officer, who checks Xero, then retries,
   or marks it resolved and records the refund by hand if it is there;

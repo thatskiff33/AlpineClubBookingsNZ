@@ -19,6 +19,7 @@ import { readBookingNoEmails } from "@/lib/booking-email-suppression";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdditionalPaymentReminderEmail } from "@/lib/email";
+import { isLeftForTheEmailRetryJob } from "@/lib/email/send-outcome";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
@@ -338,14 +339,10 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
           above skip an unreachable recipient BEFORE the claim; reaching here at
           all means the state changed under this very pass.
         */
-        const replayable =
-          (outcome.status === "withheld_for_booking" &&
-            outcome.reason === "booking_flag_unreadable") ||
-          // #3035: every environment-safety withhold except the confirmed-copy
-          // one leaves the same replayable FAILED EmailLog row, so the stamp stays
-          // for the same reason. Only the terminal case gets its stamp back.
-          (outcome.status === "withheld_for_environment" &&
-            outcome.reason !== "environment_non_production");
+        // #3035, #5298: an environment fault (not the confirmed copy) and a
+        // lost hand-over leave the message to the retry job too, so the stamp
+        // stays for the same reason.
+        const replayable = isLeftForTheEmailRetryJob(outcome);
         if (!replayable) {
           await restoreAdditionalPaymentStamps({ claim, now });
         }

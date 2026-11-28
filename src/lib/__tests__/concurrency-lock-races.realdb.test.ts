@@ -152,6 +152,15 @@ import "./hut-leader-teacher-exclusion.realdb.test";
 // RUN_CONCURRENCY_RACE_TESTS=1 and its `race-3039-` fixtures are cleaned
 // independently.
 import "./adult-member-hosting-group-trip-races.realdb.test";
+// #5239 shares the same guarded database to prove the Group Trip cover
+// freshness the kiosk relies on: the AuditLog trigger bumps a trip's
+// coverageInvalidationRevision for exactly the truncation row and rolls back
+// with it, old-colour writes still bump, and an evaluation's stamp can be older
+// than the facts it read but never newer, in both interleavings with a
+// truncating fan-out. Its describe stays skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1 and its `race-5239-` fixtures are cleaned
+// independently.
+import "./kiosk-group-trip-freshness.realdb.test";
 // #3292 reuses this guarded database to prove the Member/MemberPartnerLink
 // triggers, canonical pair-row application protocol, direct-SQL bypass races,
 // cascade cleanup and opposing multi-pair lock orders against PostgreSQL.
@@ -270,6 +279,13 @@ import "./kept-settle-queued-cancel.realdb.test";
 import "./kept-settle-failed-card-refund.realdb.test";
 // #4449 verify: one bank-transfer floor alert per payment per inbound credit-note sync.
 import "./allocation-floor-alert-once.realdb.test";
+// #5289 A: a correction voided in Xero comes back off its bank-transfer payment, through the REAL sync.
+import "./voided-modification-note-recount.realdb.test";
+// #5289 D, F: the bank-transfer floor adds back the corrections the links count, alerts nothing while a
+// refund note is queued, and a kept settle's floor alert is recorded with its total and sent exactly once.
+import "./bank-transfer-floor-corrections.realdb.test";
+// #5289 E: a Xero writer never lowers a card payment's refund ledger.
+import "./card-refund-ledger-never-lowered.realdb.test";
 // #4047: read-only invoice discovery and post-provider audience/lifecycle fences.
 import "./booking-outstanding-observation.realdb.test";
 // #3864 reuses it to prove an edit's stored credit election is never spent on top
@@ -597,6 +613,12 @@ import "./prisma-exact-prefix.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4165` rows.
 import "./audit-query-exact-prefix.realdb.test";
+// #5265 reuses it to prove the owner-run expiry backfill for older audit
+// entries: apply with the census's numbers, then the real prune deletes only
+// rows over seven years old, keeps an incident-preserved one under ten, and
+// leaves a keep-for-ever row and every other column alone. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-5265` rows.
+import "./audit-expiry-backfill.realdb.test";
 // #4162 reuses it to prove "undo, then ask once" for a voided bank-transfer
 // refund note: the inbound floor, the nightly undo (allocation, line, total and
 // one follow-up together), a spare note, a create in flight, #4161's heal, two
@@ -886,6 +908,10 @@ import "./xero-account-credit-note-stamp.realdb.test";
 // line under the edit at the settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4661-` fixtures.
 import "./unpaid-edit-change-fee-owed.realdb.test";
+// #5288 reuses it to prove an unlinked Internet Banking booking's edit increase
+// is asked for and billed once, on the primary invoice the edit raises.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns its `race-5288-` fixtures.
+import "./ib-unlinked-fee-ask.realdb.test";
 // #4924 reuses it to prove a save carrying figures its preview showed before the
 // club day crossed a change-fee band is refused with the fresh figures and writes
 // nothing. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its

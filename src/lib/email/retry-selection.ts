@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { EmailHandoverState, Prisma } from "@prisma/client";
 
 /**
  * The email retry ceiling: the cron replays a `FAILED` row only while
@@ -16,6 +16,21 @@ below it.
  * that depends on the mailer.
  */
 export const EMAIL_RETRY_MAX_ATTEMPTS = 3;
+
+/** `EmailLog.attempts`'s default: a row no retry has claimed yet. */
+export const FIRST_EMAIL_ATTEMPT = 1;
+
+/**
+ * #5298 (INV-INT-043): a `FAILED` row the stranded-email sweep flagged as
+ * possibly delivered, still waiting for an officer. An officer's Try again
+ * hands it back below the ceiling, and from then on it is an ordinary retry.
+ */
+export function isUnconfirmedDeliveryAwaitingOfficer(row: {
+  attempts: number;
+  handoverState?: EmailHandoverState | null;
+}): boolean {
+  return row.handoverState === "UNCONFIRMED" && row.attempts >= EMAIL_RETRY_MAX_ATTEMPTS;
+}
 
 /**
  * The email retry cron replays a `FAILED` row only while it holds a body in one

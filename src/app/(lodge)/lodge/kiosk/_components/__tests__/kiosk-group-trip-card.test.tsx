@@ -87,6 +87,31 @@ describe("#3040 the kiosk Group Trip block", () => {
     expect(screen.queryByText(/Booking Officer/)).not.toBeInTheDocument();
   });
 
+  it("attributes a night covered from a sibling booking to the Group Trip, by category only", () => {
+    // #5239: verified sibling cover now reaches the screen. The figures and the
+    // attribution are the existing wording; what this pins is that a sibling
+    // claim reads as "another booking in the same Group Trip", never as a person.
+    const { container } = render(
+      <KioskAdultCoverSourceLine
+        cover={{
+          status: "EVALUATED",
+          nights: [
+            { night: "2026-08-01", covered: true, scopes: ["SAME_GROUP_TRIP"] },
+            { night: "2026-08-02", covered: false, scopes: [] },
+          ],
+          scopes: ["SAME_GROUP_TRIP"],
+          decision: null,
+        }}
+      />,
+    );
+    expect(screen.getByText("Adult cover: 1 of 2 nights covered")).toBeInTheDocument();
+    expect(
+      screen.getByText("From: Another booking in the same Group Trip"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Not covered: 2026-08-02")).toBeInTheDocument();
+    expect(container.innerHTML).not.toMatch(/needs re-checking/);
+  });
+
   it.each([
     ["PENDING" as const, "Waiting for a Booking Officer's decision"],
     ["APPROVED" as const, "A Booking Officer has approved this"],

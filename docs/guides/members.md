@@ -259,8 +259,8 @@ than with a screenshot:
   that reason rather than leaving the child unreachable.
   **When Add Dependent is disabled** it says why, on both the *create new* and
   *link existing* paths: the member is inactive, the member is archived
-  (archiving cannot be undone, so add the dependent under someone else in the
-  family), or the record is an organisation or school account, which is not a
+  (unarchiving leaves them cancelled, so add the dependent under someone else in
+  the family), or the record is an organisation or school account, which is not a
   person and so cannot be recorded as anyone's parent.
 - **Membership** — life-member status, the seasonal membership-type change
   (preview + admin reason required before saving), and subscription history.
@@ -268,9 +268,11 @@ than with a screenshot:
   approve), promo codes, and the Xero contact link.
 - **Committee** — this member's committee assignments.
 - **History & Activity** — bookings, Xero activity, and the audit log.
-- **Lifecycle & Deletion** — cancellation, archive (two-admin), hard-delete
-  request (two-admin), and, for Full Admins, **Merge a duplicate** into this
-  record and the **Subject access report**.
+- **Lifecycle & Deletion** — cancellation, archive (two-admin) and its
+  **Archive history**, hard-delete request (two-admin), and, for Full Admins,
+  **Unarchive Member** (see
+  [Cancellation Requests](membership-cancellations.md#unarchive-a-member)),
+  **Merge a duplicate** into this record and the **Subject access report**.
 
 ### Merge a duplicate
 

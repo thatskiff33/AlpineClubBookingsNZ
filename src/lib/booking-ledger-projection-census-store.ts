@@ -29,6 +29,7 @@ import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-cen
 import type { CancellationEventSnapshot } from "@/lib/booking-events";
 import { INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT } from "@/lib/internet-banking-settlement-evidence";
 import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
+import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 import { readBookingHandBackJournal, readBookingJournalCharges, type BookingHandBackJournal, type BookingJournalCharges } from "@/lib/member-money";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
@@ -118,8 +119,9 @@ const CENSUS_SELECT = {
     orderBy: ASC,
     select: { id: true, status: true, approvedAmountCents: true },
   },
+  // #5289 review: the cancellation itself, never a settlement marker written after it.
   events: {
-    where: { type: "CANCELLED" },
+    where: { type: "CANCELLED", ...NOT_A_SETTLEMENT_MARKER_WHERE },
     orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
     take: 1,
     select: { snapshot: true },

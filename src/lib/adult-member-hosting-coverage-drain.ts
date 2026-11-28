@@ -547,19 +547,31 @@ async function processHostingCoverageReevaluation(
   // is FALSE: `sameOwnerCoverageDependentWhere` pins `lodgeId` and
   // `hostingSiblingWhere` carries NO lodge clause, so a split pair at two lodges is
   // exactly what it cannot reach. See `expandWithSplitHalves`.
+  const sourceIds =
+    refreshedItem.sourceBookingId && !sourceBookingIsTerminal
+      ? [refreshedItem.sourceBookingId]
+      : [];
+  // THE ROW'S OWN BOOKING IS NEVER LEFT TO THE CAPPED READ (#5239). The
+  // same-owner read stops at `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`, so an owner
+  // with that many overlapping bookings could have the very booking a Group Trip
+  // fan-out queued this row for cut off, and the row completed without it: the
+  // kiosk would then trust a sibling-cover snapshot nobody re-checked.
   const dependentIds = await expandWithSplitHalves(
     policy.hostScopes.sameBookingOwner || !refreshedItem.sourceBookingId
-      ? await loadSameOwnerCoverageDependentIds(
-          {
-            memberId: refreshedItem.memberId,
-            lodgeId: refreshedItem.lodgeId,
-            nights: refreshedItem.nights,
-          },
-          db,
-        )
-      : sourceBookingIsTerminal
-        ? []
-        : [refreshedItem.sourceBookingId],
+      ? [
+          ...new Set([
+            ...(await loadSameOwnerCoverageDependentIds(
+              {
+                memberId: refreshedItem.memberId,
+                lodgeId: refreshedItem.lodgeId,
+                nights: refreshedItem.nights,
+              },
+              db,
+            )),
+            ...sourceIds,
+          ]),
+        ]
+      : sourceIds,
     db,
   );
 
@@ -668,12 +680,9 @@ async function notifyOwnerOfLostCoverage(
     lodgeId: delivery.lodgeId,
   });
   if (outcome.status === "sent") return "sent";
-  if (
-    outcome.status === "withheld_for_booking" &&
-    outcome.reason === "booking_flag_unreadable"
-  ) {
-    return "retry";
-  }
+  // #5298: a lost hand-over sent nothing, and this template keeps no copy for the sweep to re-send.
+  if (outcome.status === "handover_lost") return "retry";
+  if (outcome.status === "withheld_for_booking" && outcome.reason === "booking_flag_unreadable") return "retry";
   // #3035: an environment-safety CONFIGURATION fault is the same class of
   // transient fault as an unreadable switch — nothing is wrong with the recipient
   // and the answer changes as soon as somebody fixes the deployment. A CONFIRMED

@@ -214,6 +214,17 @@ There are eleven, and each one belongs to exactly one AI Diagnostics area:
 | `communication` | Bulk email, member notices, **delivery-suppression clearances**, credential-email reissues | Support **+ Membership** |
 | `privacy` | **Deletion requests and the decisions on them**, member exports, member-guest lookups, **issue reports** (even though Issue Reports sits under Support) | Support **+ Membership** |
 
+**An officer's AI app reads by the same column** (ALP-724). The audit log is an
+AI app action (`search_audit_log`, see the [AI app guide](mcp-server.md)), and an
+app is a model reading on the officer's behalf, not the officer at this screen. So
+a connection searches only the entries whose category the officer's areas may
+correlate in AI Diagnostics, whatever filters the app sends, and never an entry
+with no category. Its answer leaves out the email addresses on the people an
+entry names, IP addresses, browser details and the structured metadata. An
+entry's title, description and details text reach the app as the officer reads
+them here, so they can still name an address an email was sent to. The officer
+still reads every entry here.
+
 **Several of those rows changed in this release, and every one of them changes who
 can see what.**
 
@@ -389,6 +400,18 @@ that dropped the line whenever the entry recorded structured data rather than a
 sentence. Nothing about the size or the shape of what was recorded decides it
 any more. If a member asks why sign-in entries have started appearing, that is
 why.
+
+**Member deletions, archives and family suggestions stay Admin (owner decision,
+20 Nov 2026, #5265).** Eight kinds of entry were held for this decision: an
+officer requesting, approving or rejecting a member's deletion or archiving (six
+kinds), and hiding or resetting a family-link suggestion (two). All eight stay
+under **Admin**, so members never see them. Moving the first six would show the
+member being deleted or archived who asked for it, the reason the officer typed
+and, for an officer who is not an administrator, that officer's name; moving the
+other two would put each entry on the acting officer's own timeline. The member's
+own deletion request and the decisions on it are a different event and stay under
+**Privacy**, on that member's timeline. Reopening any of the eight is a fresh
+owner decision.
 
 **A second thing on the member side, from this release.** Twenty-six of the kinds
 of entry that gained a category are now inside the member-visible slice when they
@@ -636,9 +659,18 @@ already gets. Two things follow: nothing is deleted sooner than seven years from
 now because of this, and **the older entries are still untouched on retention** —
 giving them a category (above) deliberately did *not* give them an expiry, so
 each keeps whatever retention it was recorded with (none, for every one of those
-writers, so they remain kept indefinitely) until the club decides otherwise,
-separately; the upgrade notes give a query that shows the actual figures. If
-your club needs some of these kept beyond seven years, say so before that
+writers, so they are kept indefinitely).
+
+**The decision on those older entries (owner, 20 Nov 2026, #5265): seven years
+from the day each was recorded.** They get the same seven-year expiry as a new
+entry, counted from their own recorded date, so any already older than seven
+years are deleted for good at the nightly clean-up after it is applied.
+**Nothing changes until the owner runs the apply**: `pnpm run
+audit:expiry-backfill` first reports the counts by kind and how many would be
+deleted, and its apply asks for both numbers back. Until then the older
+entries are still kept. The steps are in the
+[retention runbook](../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#older-entries-with-no-expiry-5265).
+If your club needs some of these kept beyond seven years, say so before that
 horizon; it is a setting, not a law.
 
 **What "expires" means for these entries: deletion, not filing.** The archive

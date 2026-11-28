@@ -1015,10 +1015,9 @@ arithmetic, a today's-rate refund, averaged per-night rows or without the
 edit-time discount keeps its rows and price, and a guest already below zero is
 left as found, neither driven deeper nor repaired. These rules bind edits from
 here on; any correction is an owner decision and a separate, audited adjustment
-(#2745, #2756).
+(#2745, #2756; read-only audit `bookings:audit-mid-stay-edits`, #5242).
 
-History, measurements and rejected alternatives: #2736, #2743, #2744 and #2756
-(and #2770, #4317).
+History: #2736, #2743, #2744, #2756, #2770, #4317.
 
 ## INV-MOD-020
 
@@ -1324,8 +1323,12 @@ reprices, and records no late-notice fee on the quote, the history, the
 payment, the amount owed, the invoice, or either ledger. #4661 and #4735, which
 added that fee to an unpaid booking, are withdrawn for every new edit. A fee
 already stored that way is left as it is. A paid edit's fee is recorded on the
-payment once, by `applyPaymentAdjustments`, whatever was captured (#5039). A
-finished stay's removal retention is not this fee (`INV-PAY-119`).
+payment once, by `applyPaymentAdjustments`, whatever was captured (#5039),
+and is asked for: by card, on a supplementary invoice, or, on an Internet
+Banking booking with no primary invoice linked, on that invoice, which the
+edit raises (#5288, `INV-PAY-163`). A finished stay's removal retention is not
+this fee (`INV-PAY-119`). Pinned by `unpaid-edit-change-fee-owed.realdb.test.ts`
+and `ib-unlinked-fee-ask.realdb.test.ts`.
 
 **A promotion change asked for in the same request is applied.** A parked edit
 used to drop a `promoCode`, `promoCodes` or `removePromoCode` and say so in one

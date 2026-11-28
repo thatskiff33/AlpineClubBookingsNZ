@@ -19,6 +19,8 @@ import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { primeEmailClubTimeZone } from "@/lib/email-templates-club-time";
 import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
+import { CLUB_FORMAT_CONNECTION_SHAPE } from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * The club currency and locale maintenance API (stage 1 of programme #3205,
@@ -63,7 +65,7 @@ import { isFullAdmin } from "@/lib/access-roles";
  * (`@/lib/prisma-errors`); this comment is why `P2002` is safe for this writer.
  */
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin({ permission: "any-admin" });
   if (!guard.ok) return guard.response;
 
@@ -75,7 +77,11 @@ export async function GET() {
     // and payment counts are not part of the view-only payload other admins get.
     isFullAdmin(guard.session.user) ? countInFlightCardPayments() : Promise.resolve(null),
   ]);
-  return NextResponse.json({ state: await stateFromResolved(resolved), inFlight });
+  return connectionJson(
+    request,
+    { state: await stateFromResolved(resolved), inFlight },
+    CLUB_FORMAT_CONNECTION_SHAPE,
+  );
 }
 
 /**

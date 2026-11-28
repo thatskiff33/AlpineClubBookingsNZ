@@ -523,7 +523,7 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     expect(mocks.reconcile).not.toHaveBeenCalled();
   });
 
-  it("does not resolve an active source merely because the capped dependent list omitted it", async () => {
+  it("re-checks, never resolves, an active source the capped dependent list omitted (#5239)", async () => {
     const item = { ...CLAIMED_ITEM, sourceBookingId: "source-after-cap" };
     mocks.claim.mockReset();
     mocks.claim.mockResolvedValueOnce([item]).mockResolvedValue([]);
@@ -537,7 +537,12 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     const result = await drainHostingCoverageReevaluations({}, makeDb());
 
     expect(result).toMatchObject({ claimed: 1, processed: 1, incidentsResolved: 0 });
-    expect(mocks.reconcile).toHaveBeenCalledTimes(25);
+    // The row's own booking is re-checked even past the cap: a Group Trip
+    // fan-out queued this row for it, and the kiosk trusts that it ran.
+    expect(mocks.reconcile).toHaveBeenCalledTimes(26);
+    expect(mocks.reconcile.mock.calls.at(-1)?.[0]).toMatchObject({
+      bookingId: "source-after-cap",
+    });
     expect(mocks.resolveIncidents).not.toHaveBeenCalled();
   });
 
@@ -1056,6 +1061,24 @@ describe("hosting coverage drain claim fences (#2596)", () => {
     expect(mocks.fail).toHaveBeenCalledWith(
       expect.objectContaining({ id: "queue-1", claimToken: "claim-current" }),
       expect.stringContaining("could not be read"),
+      expect.anything(),
+    );
+    expect(mocks.complete).not.toHaveBeenCalled();
+  });
+
+  // #5298: a lost hand-over sent nothing, and this template keeps no copy for
+  // the stranded-email sweep, so the outbox owns the retry.
+  it("fails and releases the exact claims when the email's hand-over was lost", async () => {
+    mocks.loadDependents.mockResolvedValue(["booking-1"]);
+    mocks.reconcile.mockResolvedValue({ action: "opened", incidentId: "incident-1", stateKey: "v1:state-a" });
+    mocks.claimNotification.mockResolvedValue({ incidentId: "incident-1", stateKey: "v1:state-a", claimToken: "notification-current" });
+    mocks.sendEmail.mockResolvedValue({ status: "handover_lost", emailLogId: "mail-1" });
+
+    const result = await drainHostingCoverageReevaluations({}, makeDb());
+
+    expect(result).toMatchObject({ claimed: 1, processed: 0, notified: 0, failed: 1 });
+    expect(mocks.releaseNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ claimToken: "notification-current" }),
       expect.anything(),
     );
     expect(mocks.complete).not.toHaveBeenCalled();

@@ -22,6 +22,11 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import {
+  ACCESS_ROLE_LIST_CONNECTION_SHAPE,
+  type AccessRoleListAnswer,
+} from "@/lib/connection-shapes/support-system";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 const createSchema = z
   .object({
@@ -33,7 +38,7 @@ const createSchema = z
   })
   .strict();
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
@@ -43,13 +48,14 @@ export async function GET() {
     definitions,
   );
 
-  return NextResponse.json({
+  const answer: AccessRoleListAnswer = {
     roles: definitions.map((definition) => ({
       ...serializeAccessRoleDefinition(definition),
       memberCount: holderCounts.get(definition.id) ?? 0,
     })),
     roleOptions: buildAccessRoleOptions(definitions),
-  });
+  };
+  return connectionJson(request, answer, ACCESS_ROLE_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: Request) {
