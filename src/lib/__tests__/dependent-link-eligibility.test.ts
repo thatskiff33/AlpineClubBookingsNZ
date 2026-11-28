@@ -1115,8 +1115,8 @@ describe("dependentParentStateBlocker (#2282)", () => {
 
   it("blocks an archived member as ARCHIVED, not INACTIVE", () => {
     // Archiving also clears `active`, so order decides which reason the admin
-    // reads — and archiving cannot be undone, so "reactivate them" would be the
-    // wrong instruction entirely.
+    // reads — and an unarchived member is still cancelled (#5540), so
+    // "reactivate them" would be the wrong instruction entirely.
     expect(
       dependentParentStateBlocker({
         ...CURRENT,

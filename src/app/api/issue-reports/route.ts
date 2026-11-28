@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
-import { normalizeInternalAppUrl } from "@/lib/app-url";
+import { getAppBaseUrl } from "@/lib/app-url";
+import {
+  ISSUE_REPORT_PAGE_URL_MAX_LENGTH,
+  issueReportPageUrlToStore,
+} from "@/lib/issue-report-page-url";
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { deriveIssueReportScreenshotOrigin } from "@/lib/issue-report-screenshot-access";
 import { prisma } from "@/lib/prisma";
@@ -17,7 +21,7 @@ import { adminHref } from "@/lib/admin-hubs";
 const MAX_SCREENSHOT_BYTES = 900_000;
 
 const issueReportSchema = z.object({
-  pageUrl: z.string().trim().min(1).max(2048),
+  pageUrl: z.string().trim().min(1).max(ISSUE_REPORT_PAGE_URL_MAX_LENGTH),
   pageTitle: z.string().trim().max(300).optional(),
   description: z.string().trim().min(10).max(2000),
   screenshotDataUrl: z.string().max(2_000_000).optional(),
@@ -61,67 +65,6 @@ function parseScreenshot(
     dataUrl: screenshotDataUrl,
     contentType,
   };
-}
-
-function firstHeaderValue(value: string | null) {
-  return value?.split(",")[0]?.trim() || null;
-}
-
-function httpOrigin(value: string | null | undefined) {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return null;
-    }
-
-    return parsed.origin;
-  } catch {
-    return null;
-  }
-}
-
-function forwardedOrigin(request: NextRequest) {
-  const forwardedHost =
-    firstHeaderValue(request.headers.get("x-forwarded-host")) ||
-    request.headers.get("host");
-  if (!forwardedHost) {
-    return null;
-  }
-
-  const forwardedProto = firstHeaderValue(
-    request.headers.get("x-forwarded-proto")
-  );
-  const protocol = forwardedProto === "http" ? "http" : "https";
-  return httpOrigin(`${protocol}://${forwardedHost}`);
-}
-
-function uniqueOrigins(origins: Array<string | null>) {
-  return Array.from(
-    new Set(origins.filter((origin): origin is string => Boolean(origin)))
-  );
-}
-
-function normalizeIssueReportPageUrl(input: string, request: NextRequest) {
-  const configuredOrigin = httpOrigin(process.env.NEXTAUTH_URL);
-  const requestOrigin = httpOrigin(request.nextUrl.origin);
-  const trustedOrigins = uniqueOrigins([
-    configuredOrigin,
-    forwardedOrigin(request),
-    requestOrigin,
-  ]);
-
-  for (const baseUrl of trustedOrigins) {
-    const pageUrl = normalizeInternalAppUrl(input, { baseUrl });
-    if (pageUrl) {
-      return { pageUrl, appOrigin: baseUrl };
-    }
-  }
-
-  return null;
 }
 
 export async function POST(request: NextRequest) {
@@ -178,18 +121,17 @@ export async function POST(request: NextRequest) {
       member,
       sessionUser: session.user,
     });
-    const pageUrlContext = normalizeIssueReportPageUrl(
-      parsed.data.pageUrl,
-      request
-    );
-    if (!pageUrlContext) {
+    // The widget posts `window.location.href`. Only its path, query and
+    // fragment are kept, on the configured origin: no host from the body or
+    // from a request header is stored, emailed or shown to an officer.
+    const pageUrl = issueReportPageUrlToStore(parsed.data.pageUrl);
+    if (!pageUrl) {
       return NextResponse.json(
-        { error: "Page URL must point to this site" },
+        { error: "Page URL must be the address of a page on this site" },
         { status: 400 }
       );
     }
 
-    const { pageUrl, appOrigin } = pageUrlContext;
     const pageTitle = parsed.data.pageTitle?.trim() || null;
     const description = parsed.data.description.trim();
     const now = new Date();
@@ -234,7 +176,7 @@ export async function POST(request: NextRequest) {
       // officer sees, and #2704 made that whole fields rather than a broken
       // fragment; this payload can exceed 1000, because `pageUrl` is capped at
       // 2048 and `pageTitle` at 300 by the schema above and
-      // `normalizeInternalAppUrl` keeps the query string.
+      // `issueReportPageUrlToStore` keeps the query string.
       category: "privacy",
       memberId: member.id,
       targetId: issueReport.id,
@@ -254,7 +196,7 @@ export async function POST(request: NextRequest) {
       pageUrl,
       pageTitle,
       description,
-      issueReportUrl: `${appOrigin}${adminHref("issue-reports")}?report=${encodeURIComponent(
+      issueReportUrl: `${getAppBaseUrl()}${adminHref("issue-reports")}?report=${encodeURIComponent(
         issueReport.id
       )}`,
       hasScreenshot: Boolean(screenshot),

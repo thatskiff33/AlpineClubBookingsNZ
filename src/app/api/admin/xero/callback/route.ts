@@ -1,3 +1,4 @@
+import { getAppBaseUrl } from "@/lib/app-url";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { adminHref } from "@/lib/admin-hubs";
@@ -39,7 +40,7 @@ function getSafeXeroCallbackErrorMessage(error: unknown) {
  * Handles the OAuth2 callback from Xero after admin grants consent.
  */
 export async function GET(request: NextRequest) {
-  const baseUrl = process.env.NEXTAUTH_URL || request.url;
+  const baseUrl = getAppBaseUrl();
   const incomingUrl = new URL(request.url);
   const requestState = incomingUrl.searchParams.get("state");
   const cookieState = request.cookies.get(XERO_OAUTH_STATE_COOKIE)?.value;

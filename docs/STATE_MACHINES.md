@@ -4141,6 +4141,7 @@ Known request statuses: `REQUESTED`, `APPROVED`, `REJECTED`, `WITHDRAWN`,
 Known participant statuses: `REQUESTED`, `PENDING_CONFIRMATION`, `DECLINED`,
 `APPROVED`, `REJECTED`, `CANCELLED`, `REJOINED`.
 Known lifecycle action statuses: `REQUESTED`, `APPROVED`, `REJECTED`.
+Known lifecycle actions: `ARCHIVE`, `DELETE`, `UNARCHIVE` (always `APPROVED`).
 
 A departure has an explicit calendar day (`Member.leavingDate`, #4457).
 Single and bulk deactivation, cancellation approval, archive approval and
@@ -4160,7 +4161,20 @@ admin approves -> local account/family changes -> Xero cancellation queued -> co
 admin rejects/withdraws -> request closed without lifecycle mutation
 archive/delete requested -> second-admin review -> approved/rejected
 delete approval -> eligibility re-check -> hard delete only when safe
+archived -> Full Admin unarchives (reason, one step) -> cancelled, not archived | 409 (deleted, not archived, pending archive or delete request) | 403 (not a Full Admin)
 ```
+
+Unarchive (#5540) is the archive's one reverse edge; cancellation has none.
+A Full Admin clears it from the member page's Lifecycle card
+(`POST /api/admin/members/[id]/lifecycle/unarchive`), under the member's
+`member-lifecycle:` key, with a guarded claim on `archivedAt`. Only the archive
+columns change: the member stays cancelled, inactive and login-off, keeps their
+leaving date, and gets back no family link. No email and no Xero call. It
+writes an `APPROVED` `UNARCHIVE` lifecycle row (the admin as requester and
+reviewer) and a `member_lifecycle.unarchived` audit row; the `ARCHIVE` row
+stays, so the page's Archive history shows every cycle. An `UNARCHIVE` row is
+never a request to review: the list API accepts only `ARCHIVE` and `DELETE`.
+See [`INV-LIFE-013`](invariants/membership-lifecycle.md#inv-life-013).
 
 Surfacing (#1938): ARCHIVE requests are reviewed on
 `/admin/membership-cancellations`; DELETE requests are reviewed in the
@@ -4560,20 +4574,35 @@ still pending when the offer ends is retired, not sent, unless the retry job
 had already claimed it (Waitlist Lifecycle).
 
 A card payment's confirmation (#5433 PR 3, owner decisions D1, D7 and D8) is
-the kind `booking-confirmed`. The three callers that send it (the Stripe
-webhook, the confirm-payment route and the confirm-pending job's saved-card
-charge) ask the settle to record it (`owesPaidConfirmation`);
+the kind `booking-confirmed`. Every card door that confirms a booking by itself
+asks the settle to record it (`owesPaidConfirmation`): the Stripe webhook, the
+confirm-payment route and the confirm-pending job's saved-card charge (PR 3),
+and the create-payment-intent and payment-link recoveries of a capture whose
+webhook was missed and the charge-saved-method route, whether an officer or an
+authorised cron call starts it (the card recovery doors; owner decision D12,
+28 Nov 2026, for the charge-saved-method route). Before that change those three
+sent no confirmation, and the webhook arriving after their settle found the
+booking already paid and sent none either.
 `settleAndPostBookingReceipts` writes the marker last in its transaction when
 the settle body returns a fresh `paid`, so a replayed settle that finds the
 booking already paid writes none. A booking id that cannot key a marker is an
-error log, never a throw: the payment settles and no confirmation is recorded.
-The other card doors (the charge-saved-method route, an officer's
-confirm-pending-guests, the create-payment-intent and payment-link recoveries)
-send no confirmation, or send one only on the officer's choice, and record none,
-as before. The caller queues the booking's Xero invoice first and then delivers
-the marker after its commit (the invoice queue is one outbox row, then an inline
-outbox kick when Xero is connected; no job re-queues a missed one, so it goes
-first). The wait is 30 minutes (a day after an officers' attempt that reached
+error log, never a throw: the payment settles, no confirmation is recorded, and
+the settle hands back `paidConfirmation: null`, so the door sends it once,
+unkeyed (unreachable with today's ids). For the three PR 3 doors that is what
+they sent before #5433; for the three card recovery doors it is new, as they
+sent nothing before. A caller that did not ask gets no `paidConfirmation` at
+all, and the after-commit sequence then logs an error and sends nothing, so a
+door that forgets the flag never sends a confirmation the sweep cannot see. An
+officer's confirm-pending-guests sends one only on the officer's choice and
+records none, as before (#5470). After its commit each door runs the one
+sequence `queueInvoiceAndDeliverPaidConfirmation`, as does the confirm-pending
+job's zero-balance confirmation (below): it queues the booking's Xero invoice
+first and then delivers the marker (the invoice queue is one outbox row, then
+an inline outbox kick when Xero is connected; no job re-queues a missed one, so
+it goes first). A door whose settle found the booking already paid, or a
+recovery that settled nothing because the payment was already recorded, sends
+nothing: the settle that marked the booking paid owns its confirmation. The
+wait is 30 minutes (a day after an officers' attempt that reached
 nobody), the event key `<bookingId>:<paidAtMs>`. The email is rendered from the
 booking as it stands then (`paid-booking-confirmation-email.ts`), stating any
 upward change since the payment that is not yet collected. It is cleared

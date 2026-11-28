@@ -1974,7 +1974,7 @@ export async function markBookingPaymentSucceeded({
     outcome: reconciliation.outcome,
     bookingId,
     bumpedBookingIds: reconciliation.bumpedBookingIds,
-    ...(reconciliation.paidConfirmation ? { paidConfirmation: reconciliation.paidConfirmation } : {}),
+    ...(reconciliation.paidConfirmation !== undefined ? { paidConfirmation: reconciliation.paidConfirmation } : {}),
   };
 }
 
