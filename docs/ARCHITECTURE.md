@@ -764,18 +764,22 @@ Four rules, and they are all deliberate:
 **The census enforces D1 while the sweep finishes** (#4951,
 `INV-PUB-006`). `src/components/ui/__tests__/card-title-classification-census.test.ts`
 fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
-`src/app/(website-dynamic)`, `src/app/(website)`, `src/components/website` or
-in the shared member cards it lists omits `headingLevel`, and holds the count
-of unclassified titles
+`src/app/(website-dynamic)`, `src/app/(website)`, `src/components/website`,
+the Finance area (`src/app/(admin)/admin/finance`, `src/app/(finance)`,
+`src/components/finance`, and the Finance pages' folders from before the admin
+hubs move, #4468) or in the shared cards it lists omits `headingLevel`, and
+holds the count of unclassified titles
 everywhere else at exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed, 231
-after the member sweep, #5216). It fails both ways: a new unclassified title
+after the member sweep, 198 after the Finance sweep, #5216). It fails both ways: a new unclassified title
 must be classified rather than raise the number, and a sweep that classifies
 titles lowers the constant in the same change and adds what it swept to the
 census's forbidden roots or shared-file list, so it cannot regress. The member
 sweep covered the components several kinds of page share (the booking editor,
 the edit-booking panel, the guest-consent card, the officer's cards on
 `/bookings/[id]`) and the public website, including the membership application
-page. The admin, finance and lodge screens are swept by area. When the baseline
+page. The Finance sweep covered the Finance hub, the `/finance` workspace and
+the refund and Xero activity cards they draw. The remaining admin and lodge
+screens are swept by area. When the baseline
 reaches zero, `headingLevel` becomes required by the type and the census
 retires.
 
