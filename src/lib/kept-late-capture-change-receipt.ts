@@ -9,8 +9,9 @@
  *
  *  - the worker records a capture on a cancelled booking only where a #3639
  *    approval task owns it ({@link hasLateCaptureApprovalTask}) and, read again
- *    under the change's anchor lock where its decision is stored, still keeps
- *    it ({@link lateCaptureStillKept}); it raises no #3980 gap invoice there;
+ *    under the change's anchor lock where its decision is stored, still owes
+ *    its receipt ({@link lateCaptureReceiptOwed}: kept, or #4381 its approved
+ *    refund closed paid another way); it raises no #3980 gap invoice there;
  *  - once recorded, any refund of it already taken is credited back and a
  *    paid-another-way close's waiting note queued
  *    ({@link answerKeptLateCaptureRefunds}), as the kept-capture invoice's
@@ -29,6 +30,7 @@ import { captureChangeId } from "@/lib/additional-capture-receipt-link";
 import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 import { ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE } from "@/lib/additional-capture-receipt-gate";
 import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 
 /** Whether a #3639 approval task owns this capture - a late capture on a cancelled booking. */
 export async function hasLateCaptureApprovalTask(paymentIntentId: string): Promise<boolean> {
@@ -39,16 +41,34 @@ export async function hasLateCaptureApprovalTask(paymentIntentId: string): Promi
   return task !== null;
 }
 
-/** Under the change's anchor lock: whether the capture's approval task still keeps it. */
-export async function lateCaptureStillKept(
-  tx: Pick<Prisma.TransactionClient, "manualRefundTask">,
+/**
+ * #4381 (`INV-PAY-144`, `INV-PAY-122`; `INV-SSOT`): DOES XERO STILL OWE THIS
+ * LATE CAPTURE ITS RECEIPT? The charge is still in the Stripe account where
+ * its approval task KEPT it (DISMISSED), or approved its refund and that card
+ * refund was then closed as paid another way (COMPLETED with a close,
+ * `findLateCaptureRefundPaidAnotherWay`; owner, 8 Oct 2026: "Record receipt,
+ * then credit"). The one spelling the receipt's enqueue, its worker
+ * ({@link keptReceiptStillKeptElseClosed}) and the kept-capture invoice's
+ * enqueue and worker ask, read under the lock each holds - so a worker never
+ * cancels the receipt a paid-another-way close queued.
+ */
+export async function lateCaptureReceiptOwed(
+  tx: Pick<Prisma.TransactionClient, "manualRefundTask" | "paymentRecoveryOperation">,
   paymentIntentId: string,
+  /**
+   * A paid-another-way close's plan, read before its record exists
+   * (`paidAnotherWayCaptureReceiptRefusal`): the close being planned counts.
+   */
+  options?: { closingPaidAnotherWay: true },
 ): Promise<boolean> {
   const task = await tx.manualRefundTask.findUnique({
     where: { lateCaptureApprovalIntentId: paymentIntentId },
     select: { status: true },
   });
-  return task?.status === "DISMISSED";
+  if (task?.status === "DISMISSED") return true;
+  if (task?.status !== "COMPLETED") return false;
+  if (options?.closingPaidAnotherWay) return true;
+  return (await findLateCaptureRefundPaidAnotherWay(paymentIntentId, tx)) !== null;
 }
 
 /**
@@ -84,7 +104,7 @@ export async function closeKeptReceiptNotKept(
 
 /**
  * C1, before the worker reads Xero: on a transaction of its own under the
- * anchor, whether the approval task still keeps the capture; if not, the row
+ * anchor, whether the capture still owes its receipt; if not, the row
  * is closed there ({@link closeKeptReceiptNotKept}). Holds no other key.
  */
 export async function keptReceiptStillKeptElseClosed(
@@ -95,7 +115,7 @@ export async function keptReceiptStillKeptElseClosed(
   const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
   return prisma.$transaction(async (tx) => {
     await lockSupplementaryInvoiceAnchor(tx, input.anchorId);
-    if (await lateCaptureStillKept(tx, input.paymentIntentId)) return true;
+    if (await lateCaptureReceiptOwed(tx, input.paymentIntentId)) return true;
     await closeKeptReceiptNotKept(tx, input.claim, details);
     return false;
   });
