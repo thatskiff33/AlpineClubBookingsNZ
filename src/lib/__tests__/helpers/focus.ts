@@ -98,7 +98,7 @@ export async function expectToHoldFocus(
 // its focus fixup on that wall-clock tick, so a control disabled while busy
 // loses focus to <body> only when the reply outlasts one; an instant mock
 // usually beats it, and a loaded CI runner does not.
-export const SLOW_REPLY_MS = 50;
+const SLOW_REPLY_MS = 50;
 
 /**
  * Run an action case against an instant and a slow reply, so an outcome
