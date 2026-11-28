@@ -390,6 +390,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-161` | An imported paid booking is settled manually in its creating transaction |
 | `INV-PAY-162` | An opening-credit file posts once, from one approval; reversal needs it unspent |
 | `INV-PAY-163` | An unlinked Internet Banking increase is asked, billed on the primary invoice |
+| `INV-PAY-164` | The booking money censuses run nightly, read-only; each disagreement alerts once |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |

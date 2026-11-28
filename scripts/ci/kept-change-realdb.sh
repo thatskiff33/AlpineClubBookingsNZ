@@ -40,6 +40,8 @@ files=(
   src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts
   # #5255: the once-ever alert sweep's give-back against the alert's email row.
   src/lib/__tests__/admin-alert-once-sweep.realdb.test.ts
+  # #4910: the nightly booking money check names drift and writes only its alert claims.
+  src/lib/__tests__/cron-booking-money-census.realdb.test.ts
   # #5298: an email a crash left QUEUED, recovered once or flagged, and the
   # requeue proof that runs the same retry job.
   src/lib/email/__tests__/stranded-queued-email.realdb.test.ts

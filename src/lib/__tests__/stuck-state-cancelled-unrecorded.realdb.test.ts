@@ -71,6 +71,9 @@ function quietDeps(): Partial<StuckStateDashboardDependencies> {
     listExhaustedCashSettlementAlerts: async () => [],
     listDeadCardRefundOperationIds: async () => new Set(),
     loadDetailFormat: async () => ({ cents: (cents) => `${cents}c`, instantDate: (instant) => instant.toISOString() }),
+    readLatestBookingMoneyCensusRun: async () => ({ problem: null, checkedAt: null, summary: null }),
+    listNegativeCreditBalances: async () => [],
+    findOrphanedAppliedCredits: async () => ({ findings: [] }),
   };
 }
 

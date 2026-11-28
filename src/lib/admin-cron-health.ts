@@ -9,6 +9,7 @@
  * product (`INV-CONFIG-001`). The caller resolves the zone and passes it in;
  * this module states no zone of its own.
  */
+import { BOOKING_MONEY_CENSUS_CRON_SCHEDULE, BOOKING_MONEY_CENSUS_JOB_NAME } from "@/lib/booking-money-census-job";
 import { FINANCE_SYNC_CRON_JOB_NAME, FINANCE_SYNC_CRON_SCHEDULE } from "@/lib/finance-sync-cron-config";
 import {
   BOOKING_DIETARY_CLEAR_JOB_NAME,
@@ -712,6 +713,17 @@ export function getAdminCronJobDefinitions(
         schedule: "0 5 * * *",
         timezone: clubTimeZone,
         expectedLocalTime: `05:00 daily in ${clubTimeZone}`,
+        staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
+        jobName: BOOKING_MONEY_CENSUS_JOB_NAME,
+        label: "Booking money check",
+        schedule: BOOKING_MONEY_CENSUS_CRON_SCHEDULE,
+        timezone: clubTimeZone,
+        expectedLocalTime: `05:30 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason

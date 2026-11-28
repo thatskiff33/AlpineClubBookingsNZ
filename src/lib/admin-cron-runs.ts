@@ -93,7 +93,8 @@ function dedupeCronRuns(runs: AdminCronRun[]): AdminCronRun[] {
   return [...byId.values()].sort((a, b) => getCronRunTime(b) - getCronRunTime(a));
 }
 
-async function getExpectedJobCronRuns(jobName: string): Promise<AdminCronRun[]> {
+/** One job's recent runs with its latest success and failure, unsorted and not de-duplicated. */
+export async function getExpectedJobCronRuns(jobName: string): Promise<AdminCronRun[]> {
   const [recentRuns, latestSuccess, latestFailure] = await Promise.all([
     prisma.cronJobRun.findMany({
       where: { jobName },

@@ -87,6 +87,17 @@ describe("named rows on Stuck States (#4959)", () => {
     expect(container.querySelector("#payment-recovery-stale-processing")).not.toBeNull();
   });
 
+  it("labels a row's link by what it opens: a member for a credit balance, a booking otherwise (#4910)", async () => {
+    mocks.areas = ["support"];
+    const credit = item("payment-negative-credit-balances", 1, 1);
+    credit.details = [{ id: "member-1", title: "Mere Parata", summary: "Credit balance $-25.00.", href: "/admin/members/member-1", opens: "member" }];
+    mocks.getStuckStateDashboard.mockResolvedValue(dashboard([credit, item("payment-recovery-exhausted", 1, 1)]));
+    render(await AdminStuckStatesPage());
+
+    expect(screen.getByRole("link", { name: "Open member" })).toHaveAttribute("href", "/admin/members/member-1");
+    expect(screen.getByRole("link", { name: "Open booking" })).toHaveAttribute("href", "/bookings/payment-recovery-exhausted-0");
+  });
+
   it("hands a Finance viewer's dead card refunds to the dashboard, reading them once", async () => {
     mocks.areas = ["support", "finance"];
     const dead = (operationId: string) => ({

@@ -59,6 +59,7 @@ import {
 } from "@/lib/stuck-state-payment-signals";
 
 import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
+import { defaultStuckStateMoneyDependencies, getMoneyCheckItems, type StuckStateMoneyDependencies } from "@/lib/stuck-state-money-signals";
 import { describeContactGroupMismatchStuckState } from "@/lib/xero-contact-group-mismatch-summary";
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
 
@@ -91,6 +92,8 @@ export interface StuckStateItem {
   href: string;
   summary: string;
   details?: StuckStateDetail[];
+  /** #4910: nothing in the app clears it, so it stays out of `totals.affectedCount`, the sidebar's count. */
+  standing?: true;
 }
 
 interface StuckStateDomainSummary {
@@ -131,7 +134,7 @@ type WaitlistOfferBooking = Parameters<
   waitlistOfferExpiresAt: Date | null;
 };
 
-export interface StuckStateDashboardDependencies {
+export interface StuckStateDashboardDependencies extends StuckStateMoneyDependencies {
   db: StuckStateDashboardDb;
   loadEffectiveModuleFlags: typeof loadEffectiveModuleFlags;
   getXeroAdminHealthSnapshot: typeof getXeroAdminHealthSnapshot;
@@ -197,6 +200,7 @@ const SEVERITY_ORDER: Record<StuckStateSeverity, number> = {
 };
 
 const defaultDependencies: StuckStateDashboardDependencies = {
+  ...defaultStuckStateMoneyDependencies,
   db: prisma as unknown as StuckStateDashboardDb,
   loadEffectiveModuleFlags,
   getXeroAdminHealthSnapshot,
@@ -284,7 +288,7 @@ function buildDomains(items: StuckStateItem[]): StuckStateDomainSummary[] {
 
 function buildTotals(items: StuckStateItem[]) {
   return {
-    affectedCount: items.reduce((sum, item) => sum + item.count, 0),
+    affectedCount: items.reduce((sum, item) => sum + (item.standing ? 0 : item.count), 0),
     itemCount: items.length,
     critical: items
       .filter((item) => item.severity === "critical")
@@ -873,6 +877,8 @@ export async function getStuckStateDashboard(input?: {
   ]);
 
   buildPaymentItems(items, paymentSignals.counts, paymentSignals.details);
+  // #4910 (`INV-PAY-164`): the nightly booking money check and the two credit faults.
+  for (const item of await getMoneyCheckItems(deps, now, viewerCanViewPaymentRows)) addItem(items, { ...item, domain: "payment" });
   const [exhaustedSettlementAlerts, exhaustedSettlementAlertRows] = await Promise.all([
     deps.countExhaustedCashSettlementAlerts(),
     viewerCanViewPaymentRows
