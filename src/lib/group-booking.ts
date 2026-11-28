@@ -870,6 +870,7 @@ export async function joinGroupBookingAsMember(
     ownerMemberId: sessionUserId,
     guests,
     seasonYear,
+    yearEndMonth,
   });
 
   // #2543 — the club's three-way lockout policy, resolved once for this join so
@@ -1675,11 +1676,12 @@ export async function verifyAndCreateNonMemberJoin(
     include: { membershipTypeRates: true },
   });
   const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
+  const yearEndMonth = await clubFinancialYearEndMonth();
   const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
     checkIn,
     checkOut,
-    yearEndMonth: await clubFinancialYearEndMonth(),
-    seasonYear: seasonYearOfStoredDate(checkIn, await clubFinancialYearEndMonth()),
+    seasonYear: seasonYearOfStoredDate(checkIn, yearEndMonth),
+    yearEndMonth,
     guests: toGuestPricingInputs(guests),
     seasons: toSeasonRateData(seasons),
     groupDiscount: toGroupDiscountConfig(gds),

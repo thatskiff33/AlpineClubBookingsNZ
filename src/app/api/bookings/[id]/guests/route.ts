@@ -498,6 +498,7 @@ export async function POST(
           })),
         ],
         seasonYear,
+        yearEndMonth,
         // Finding 2 (privacy re-review of MG3 #2308).
         skipAuthorization: isAdmin,
       });
@@ -663,6 +664,7 @@ export async function POST(
           // (#1036, INV-MOD-005).
           groupDiscount: toEditTimeGroupDiscountConfig(groupDiscountSetting),
           seasonYear,
+          yearEndMonth,
           // #2543 — the mode this request already resolved. This call runs inside
           // the transaction holding the per-lodge capacity lock, so being handed
           // the mode also removes a second pooled connection from under the lock.

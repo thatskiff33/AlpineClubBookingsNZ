@@ -317,10 +317,8 @@ export async function POST(request: NextRequest) {
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
   // The stay's membership season, from the club's RESOLVED year-end (#5259),
   // once: the price and the notice that explains it judge the same season.
-  const seasonYear = seasonYearOfStoredDate(
-    checkIn,
-    await clubFinancialYearEndMonth(),
-  );
+  const yearEndMonth = await clubFinancialYearEndMonth();
+  const seasonYear = seasonYearOfStoredDate(checkIn, yearEndMonth);
 
   try {
     const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
@@ -333,6 +331,7 @@ export async function POST(request: NextRequest) {
       seasons: seasonData,
       groupDiscount,
       seasonYear,
+      yearEndMonth,
       subscriptionLockoutMode,
     });
     // Deferred non-member "guest portion" (#2003): when a split creates a
@@ -351,6 +350,7 @@ export async function POST(request: NextRequest) {
       seasons: seasonData,
       groupDiscount,
       seasonYear,
+      yearEndMonth,
     });
     const deferredGuestPortionCents = deferredPortion?.totalPriceCents ?? null;
     const availableCreditCents = await getMemberCreditBalance(effectiveMemberId);

@@ -129,15 +129,14 @@ export async function POST(
   // The draft's membership season, from the club's RESOLVED year-end (#5259),
   // once: the policy, the subscription gate and the paid-up-adult requirement
   // below all judge the same season.
-  const seasonYear = seasonYearOfStoredDate(
-    new Date(booking.checkIn),
-    await clubFinancialYearEndMonth(),
-  );
+  const yearEndMonth = await clubFinancialYearEndMonth();
+  const seasonYear = seasonYearOfStoredDate(new Date(booking.checkIn), yearEndMonth);
   try {
     await assertMembershipTypeBookingAllowed(prisma, {
       ownerMemberId: bookingOwner(booking).memberId,
       guests: booking.guests,
       seasonYear,
+      yearEndMonth,
       // Finding 2 (privacy re-review of MG3 #2308). These are the booking's
       // STORED guests, which carry no add-time marker at all, so the collapse
       // here rests entirely on the live-boundary backstop inside

@@ -1668,6 +1668,7 @@ export async function calculateModifiedPricing(
     ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
+    yearEndMonth,
     skipAuthorization,
   });
 
@@ -1878,6 +1879,7 @@ export async function calculateModifiedPricing(
           // branches cannot price a night differently.
           groupDiscount,
           seasonYear,
+          yearEndMonth,
           skipAuthorization,
           subscriptionLockoutMode,
         });

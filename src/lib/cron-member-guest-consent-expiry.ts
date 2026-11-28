@@ -6,6 +6,7 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 
 /**
  * The member-guest pending-hold expiry sweep ("+ Add Member Guest", epic #2305,

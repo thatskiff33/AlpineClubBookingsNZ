@@ -356,6 +356,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       seasons: seasonData,
       groupDiscount,
       seasonYear: seasonYearOfStoredDate(checkIn, input.yearEndMonth),
+      yearEndMonth: input.yearEndMonth,
       // #2543 — the mode this request resolved, so the price cannot be computed
       // under a different regime than the gate that let the booking through, and
       // no settings read happens under the capacity lock.
@@ -916,6 +917,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         seasons: seasonData,
         groupDiscount,
         seasonYear: seasonYearOfStoredDate(checkIn, input.yearEndMonth),
+        yearEndMonth: input.yearEndMonth,
         // #2543 — see the draft path above.
         subscriptionLockoutMode: input.subscriptionLockoutMode,
         // Finding 2 (privacy re-review of MG3 #2308).
@@ -1325,6 +1327,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           seasons: seasonData,
           groupDiscount,
           seasonYear: seasonYearOfStoredDate(checkIn, input.yearEndMonth),
+          yearEndMonth: input.yearEndMonth,
         });
         if (!childPrice) {
           throw new Error(
@@ -1813,6 +1816,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     seasons: seasonData,
     groupDiscount,
     seasonYear: seasonYearOfStoredDate(checkIn, input.yearEndMonth),
+    yearEndMonth: input.yearEndMonth,
     // #2543 — see the draft path above.
     subscriptionLockoutMode: input.subscriptionLockoutMode,
     // Finding 2 (privacy re-review of MG3 #2308).

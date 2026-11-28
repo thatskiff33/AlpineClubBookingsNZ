@@ -1310,6 +1310,7 @@ export async function POST(
       ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
+      yearEndMonth,
       // Finding 2 (privacy re-review of MG3 #2308). `guestsForPricing` is the
       // C1-marked party, so a beyond-family member guest already on the booking
       // collapses here without a second boundary read.
@@ -1746,6 +1747,7 @@ export async function POST(
           seasons: seasonRateData,
           groupDiscount,
           seasonYear,
+          yearEndMonth,
           subscriptionLockoutMode,
         }),
         guestsForPricing,

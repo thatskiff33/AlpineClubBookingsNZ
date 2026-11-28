@@ -1092,6 +1092,7 @@ export async function POST(request: NextRequest) {
         ownerMemberId: effectiveMemberId,
         guests: party,
         seasonYear,
+        yearEndMonth,
         // Finding 2 (privacy re-review of MG3 #2308).
         skipAuthorization: isAuthorizedOnBehalf,
       });

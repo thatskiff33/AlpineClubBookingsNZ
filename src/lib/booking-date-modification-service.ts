@@ -566,6 +566,7 @@ export async function modifyBookingDates({
       ownerMemberId: bookingOwner(booking).memberId,
       guests: guestsForPricing,
       seasonYear,
+      yearEndMonth,
       // Finding 2 (privacy re-review of MG3 #2308) — see
       // `getMembershipTypeBookingPolicyBlocks`.
       skipAuthorization: actor.role === "ADMIN",
@@ -590,6 +591,7 @@ export async function modifyBookingDates({
         // would at a club with no group discount at all.
         groupDiscount: toEditTimeGroupDiscountConfig(groupDiscountSetting),
         seasonYear,
+        yearEndMonth,
         skipAuthorization: actor.role === "ADMIN",
       });
     } catch (error) {

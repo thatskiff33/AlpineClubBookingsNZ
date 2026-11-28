@@ -33,6 +33,7 @@ import { stableDigest } from "@/lib/stable-digest";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { memberImportIdentityKey } from "@/lib/member-import-identity";
 import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   toGuestPricingInputs,
   toSeasonRateData,
@@ -102,6 +103,12 @@ export type BookingImportContext = {
   today: Date;
   /** The club's date format for refusal text, resolved before any transaction. */
   format: ClubDateFormat;
+  /**
+   * The club's financial year-end month (#5259), resolved before any
+   * transaction: it places each stay in its membership season for the hosting
+   * check and the app's rate.
+   */
+  yearEndMonth: number;
 };
 
 /** Beds and member-nights claimed by the earlier will-import rows of the same file. */
@@ -223,6 +230,7 @@ export async function checkImportBooking(
     lodgeId: context.lodge.id,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    seasonYear: seasonYearOfStoredDate(booking.checkIn, context.yearEndMonth),
     guests: booking.guests.map((guest) => ({
       firstName: guest.firstName,
       lastName: guest.lastName,
@@ -457,6 +465,7 @@ async function appRateCents(
   db: BookingImportDb,
   booking: ResolvedImportBooking,
   seasons: Parameters<typeof toSeasonRateData>[0],
+  yearEndMonth: number,
 ): Promise<number | null> {
   try {
     const quote = await priceBookingGuestsWithMembershipTypePolicy(db, {
@@ -465,6 +474,8 @@ async function appRateCents(
       checkOut: booking.checkOut,
       guests: toGuestPricingInputs(booking.guests),
       seasons: toSeasonRateData(seasons),
+      seasonYear: seasonYearOfStoredDate(booking.checkIn, yearEndMonth),
+      yearEndMonth,
       skipAuthorization: true,
     });
     return quote.totalPriceCents;
@@ -488,6 +499,7 @@ export async function planBookingImport(
     bookings: readonly ParsedImportBooking[];
     today: Date;
     format: ClubDateFormat;
+    yearEndMonth: number;
     batchId?: string | null;
   },
 ): Promise<BookingImportPlan> {
@@ -499,6 +511,7 @@ export async function planBookingImport(
     activeLodgeCount,
     today: input.today,
     format: input.format,
+    yearEndMonth: input.yearEndMonth,
   };
   const [members, seasons, decidedRows] = await Promise.all([
     loadBookingImportMembers(db, input.bookings),
@@ -531,7 +544,7 @@ export async function planBookingImport(
 
     const prior = decided.get(booking.bookingRef);
     if (prior) {
-      const rate = resolved ? await appRateCents(db, resolved, seasons) : null;
+      const rate = resolved ? await appRateCents(db, resolved, seasons, context.yearEndMonth) : null;
       const imported = prior.status === BookingImportRowStatus.IMPORTED;
       rows.push({
         ...base,
@@ -561,7 +574,7 @@ export async function planBookingImport(
     }
 
     const checked = await checkImportBooking(db, context, resolved, { file, batchId, lock: false });
-    const rate = await appRateCents(db, resolved, seasons);
+    const rate = await appRateCents(db, resolved, seasons, context.yearEndMonth);
     const row: BookingImportRowPlan = {
       ...base,
       outcome: checked.refusals.length === 0 ? "IMPORT" : "REFUSED",

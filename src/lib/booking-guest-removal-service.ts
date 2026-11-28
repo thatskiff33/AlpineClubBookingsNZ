@@ -605,6 +605,7 @@ export async function removeBookingGuestInTransaction({
     ownerMemberId: bookingOwner(booking).memberId,
     guests: guestsForPricing,
     seasonYear,
+    yearEndMonth,
     // Finding 2 (privacy re-review of MG3 #2308): a member removing a guest must
     // not be told the NAME and membership category of a beyond-family member
     // still on the booking; an admin doing the same is entitled to both.
@@ -700,6 +701,7 @@ export async function removeBookingGuestInTransaction({
       // removal another.
       groupDiscount: toEditTimeGroupDiscountConfig(groupDiscountSetting),
       seasonYear,
+      yearEndMonth,
       skipAuthorization: actorRole === "ADMIN",
     }),
     guestsForPricing,
