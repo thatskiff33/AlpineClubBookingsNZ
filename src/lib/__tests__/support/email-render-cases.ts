@@ -259,6 +259,7 @@ import {
 import {
   refundRequestApprovedTemplate,
   refundRequestDeclinedTemplate,
+  importedRefundCreditedTemplate,
   supersededPaymentRefundedTemplate,
 } from "@/lib/email-templates/refunds";
 import {
@@ -1104,6 +1105,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     supersededPaymentRefundedTemplate({ bookingId: "bookingId-1", firstName: "firstName-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundedAmountCents: 6500, amountOwingCents: 36500 }, CLUB_FORMAT_TEST) },
   { id: "supersededPaymentRefundedTemplate:settled", fn: "supersededPaymentRefundedTemplate", render: () =>
     supersededPaymentRefundedTemplate({ bookingId: "bookingId-1", firstName: "firstName-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundedAmountCents: 6500, amountOwingCents: 0 }, CLUB_FORMAT_TEST) },
+  { id: "importedRefundCreditedTemplate:minimal", fn: "importedRefundCreditedTemplate", render: () =>
+    importedRefundCreditedTemplate({ bookingId: "bookingId-1", firstName: "firstName-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), creditCents: 43200 }, CLUB_FORMAT_TEST) },
   { id: "savedCardChargeFailedTemplate:minimal", fn: "savedCardChargeFailedTemplate", render: () =>
     savedCardChargeFailedTemplate({ bookingId: "bookingId-1", firstName: "firstName-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
   { id: "adminRefundRequestTemplate:minimal", fn: "adminRefundRequestTemplate", render: () =>

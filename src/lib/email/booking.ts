@@ -66,7 +66,7 @@ import { bankTransferNoteText, type BankTransferOffer } from "@/lib/credit-relea
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
-import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
+import { importedRefundCreditedTemplate, supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
@@ -1850,6 +1850,42 @@ export async function sendSupersededPaymentRefundedEmail(params: {
       // template calls, so a club that rewrites this message in the editor
       // cannot end up sending "Still owing: $0.00" as reassurance.
       owingSentence: supersededRefundOwingSentence(params.amountOwingCents, format),
+    },
+    lodgeId: params.lodgeId,
+  });
+}
+
+/**
+ * #5005 child D — an officer gave a cancelled imported booking's refund as account
+ * credit (owner decision O1). Booking-scoped like its siblings, so the per-booking
+ * "No emails" switch applies. Sent once per refund task (`idempotencyKey`).
+ */
+export async function sendImportedRefundCreditedEmail(params: {
+  bookingId: string;
+  /** The booking OWNER; an organisation has no credit account, so this is always a member. */
+  recipientMemberId: string | null;
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  creditCents: number;
+  lodgeId?: string | null;
+  idempotencyKey: string;
+},
+  format: ClubFormat,
+) {
+  await sendEmail({
+    to: params.email,
+    subject: `Your Refund Is Now Account Credit - ${EMAIL_DEFAULT_LODGE_NAME}`,
+    idempotencyKey: params.idempotencyKey,
+    html: await renderEmailHtml(() => importedRefundCreditedTemplate(params, format)),
+    bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
+    templateName: "imported-refund-credited",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+      amount: formatMoneyCents(params.creditCents, format),
     },
     lodgeId: params.lodgeId,
   });

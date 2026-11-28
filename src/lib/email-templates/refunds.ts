@@ -158,3 +158,33 @@ export function supersededPaymentRefundedTemplate(data: {
     ${supportContactSentence("If anything about this looks wrong, please contact the club at ")}
   `);
 }
+
+/**
+ * #5005 child D (owner decision O1): a cancelled imported booking's refund that an
+ * officer gave as account credit instead of paying it back by bank transfer. It
+ * says what was credited and that it is spent on a later booking; the account's
+ * balance is the member's own page's to show, so this names only this credit.
+ */
+export function importedRefundCreditedTemplate(data: {
+  bookingId: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  creditCents: number;
+},
+  format: ClubFormat,
+): string {
+  const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
+  return layout(`
+    ${heading("Your Refund Is Now Account Credit")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
+    ${alertBox(
+      "The refund for your cancelled booking (" + dates + "), " + formatCents(data.creditCents, format) +
+        ", has been added to your account as credit.",
+      "success"
+    )}
+    ${paragraph("It is not being paid back to your bank account. The credit is used towards your next booking when you pay for it.")}
+    ${button("View Booking", BASE_URL + "/bookings/" + data.bookingId)}
+    ${supportContactSentence("If you expected the money back in your bank account instead, please contact the club at ")}
+  `);
+}

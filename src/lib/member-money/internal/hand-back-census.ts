@@ -16,7 +16,9 @@ import type { HandBackCensusClass } from "./refund-census";
  * - `HAND_BACK_WITHOUT_EVENT`: a journal hand-back task (`isJournalHandBackTask`, with a payment) raised on or
  *   after the hand-back era with no R05 (`refund-obligation|hand-back|<task>`): a raise that skipped the journal.
  * - `HAND_BACK_PAID_WITHOUT_EVENT`: such a task completed on or after the era with no live R14
- *   (`hand-back-paid:<task>`). The payment posts whenever the task was raised, unapplied when it has no debt.
+ *   (`hand-back-paid:<task>`). The payment posts whenever the task was raised, unapplied when it has no debt. A task
+ *   given as account credit (`settledAsCreditId`, #5005 child D) paid nothing by bank: its debt was withdrawn
+ *   instead, which the drift class checks, so it posts no R14 and is not listed.
  * - `UNAPPLIED_HAND_BACK`: a live R14 that paid no debt, for a task that has an R05 or was raised in the era. A
  *   task raised before the era is paid unapplied by design, so it is not listed.
  * - `HAND_BACK_OBLIGATION_DRIFT`: a task's R05 has open cents other than what the task still owes
@@ -49,6 +51,8 @@ export interface HandBackCensusTask {
   lateCaptureApprovalIntentId: string | null;
   createdAt: Date;
   completedAt: Date | null;
+  /** #5005 child D: the account credit the task was given as, instead of a bank payment; null otherwise. */
+  settledAsCreditId: string | null;
 }
 
 /** What the journal holds of one booking's hand-backs and refund debts, read in one snapshot. */
@@ -91,6 +95,7 @@ async function readHandBackSince(db: Pick<Db, "memberMoneyEvent">): Promise<Date
 const TASK_SELECT = {
   id: true, bookingId: true, kind: true, status: true, amountCents: true, paymentId: true, occurrenceKey: true,
   partPaymentReviewPaymentId: true, reason: true, lateCaptureApprovalIntentId: true, createdAt: true, completedAt: true,
+  settledAsCreditId: true,
 } as const;
 
 const isPopulationTask = (task: HandBackCensusTask) => task.paymentId !== null && isJournalHandBackTask(task);
@@ -218,7 +223,7 @@ export function classifyHandBacks(bookingId: string, facts: BookingHandBackJourn
     if (!isPopulationTask(task)) continue;
     if (open === undefined && inEra(task.createdAt)) add("HAND_BACK_WITHOUT_EVENT", task.id, amount, "raised in the hand-back era with no refund debt (R05) in the journal");
     const paid = facts.payments.get(task.id);
-    if (task.status === "COMPLETED" && amount > 0 && !paid && inEra(task.completedAt ?? task.createdAt)) {
+    if (task.status === "COMPLETED" && task.settledAsCreditId === null && amount > 0 && !paid && inEra(task.completedAt ?? task.createdAt)) {
       add("HAND_BACK_PAID_WITHOUT_EVENT", task.id, amount, "paid back in the hand-back era with no hand-back payment (R14) in the journal");
     }
     if (paid && !paid.applied && (open !== undefined || inEra(task.createdAt))) {

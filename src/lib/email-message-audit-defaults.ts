@@ -102,6 +102,10 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Payment Refunded - {{CLUB_LODGE_NAME}}",
     "defaultBody": "We've Refunded a Payment\n\nHi {{firstName}},\n\nWe have refunded {{refundedAmount}} to your card. That payment was made against an earlier charge for your booking ({{checkIn}} \u2013 {{checkOut}}) that a later change to the booking had already replaced, so it should not have been taken.\n\nYou are not out of pocket: the money is on its way back to the card you used, and your booking is unaffected.\n\n{{owingSentence}}\n\nView Booking: {{BASE_URL}}/bookings\n\nIf anything about this looks wrong, please contact the club at {{SUPPORT_EMAIL}}."
   },
+  "imported-refund-credited": {
+    "defaultSubject": "Your Refund Is Now Account Credit - {{CLUB_LODGE_NAME}}",
+    "defaultBody": "Your Refund Is Now Account Credit\n\nHi {{firstName}},\n\nThe refund for your cancelled booking ({{checkIn}} \u2013 {{checkOut}}), {{amount}}, has been added to your account as credit.\n\nIt is not being paid back to your bank account. The credit is used towards your next booking when you pay for it.\n\nView Booking: {{BASE_URL}}/bookings\n\nIf you expected the money back in your bank account instead, please contact the club at {{SUPPORT_EMAIL}}."
+  },
   "waitlist-confirmation": {
     "defaultSubject": "Waitlist Confirmation - {{CLUB_LODGE_NAME}}",
     "defaultBody": "You're on the Waitlist\n\nHi {{firstName}}, the lodge is currently fully booked for your requested dates, but you've been added to the waitlist.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nWaitlist Position: #{{position}}\n\nWe'll email you as soon as a spot opens up. You'll have 48 hours to confirm your booking.\n\nView Booking: {{BASE_URL}}/bookings\n\nYou can cancel your waitlist entry at any time from your booking page."

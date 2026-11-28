@@ -201,6 +201,8 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "scripts/edit-review-cleanup.ts",
   // #5005: the paid-booking import resolves the context before each booking's transaction; its settle and $0 confirmation post through the existing doors.
   "src/lib/booking-import/write.ts",
+  // #5005 child D: an imported refund given as credit resolves the journal; its withdrawal posts through the hand-back journal door.
+  "src/lib/booking-import/refund-credit.ts",
 ];
 /** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
 const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;

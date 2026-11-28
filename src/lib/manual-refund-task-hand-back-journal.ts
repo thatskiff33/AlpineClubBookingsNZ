@@ -271,6 +271,25 @@ export async function withdrawDismissedHandBackDebt(tx: Prisma.TransactionClient
 }
 
 /**
+ * #5005 child D (owner decision O1): a cancelled imported booking's hand-back given as account credit
+ * (`giveImportedRefundAsCredit`). No bank refund will be paid, so the debt the cancel's raise posted is withdrawn
+ * exactly, as an allowed dismissal's is; the credit itself waits for ledger M5, as every cancelled bank-transfer
+ * booking's credit does. After the completion's claim and under its locks, so a lost claim leaves the debt; a
+ * journal refusal rolls the credit back.
+ */
+export async function withdrawCreditedHandBackDebt(tx: Prisma.TransactionClient, journal: BookingJournalContext, input: {
+  task: { id: string; bookingId: string };
+  actingMemberId: string;
+}): Promise<void> {
+  const { task } = input;
+  await withdrawRefundObligation(tx, journal, {
+    bookingId: task.bookingId, scope: "hand-back", id: task.id, actorMemberId: input.actingMemberId,
+    reason: "Imported booking's cancellation refund given as account credit: no bank refund is owed",
+    senderKeyPrefix: `hand-back-credit:${task.id}`,
+  });
+}
+
+/**
  * A disputed card payment's hand-back reduced by lost disputes covering part of it (owner decision, 15 Nov 2026,
  * comment 6893252570): exactly those cents of its refund debt withdrawn, through the same shared withdrawal, under
  * the reduction's own key. After the amount-guarded claim, so a lost claim writes nothing.

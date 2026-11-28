@@ -30,6 +30,9 @@ export const BOOKING_URL_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
   // siblings, so the canonical authorized booking link carries the member to the
   // booking whose money moved.
   "superseded-payment-refunded",
+  // #5005 child D: an imported booking's refund given as account credit.
+  // Booking-scoped and registered like its siblings.
+  "imported-refund-credited",
   "waitlist-confirmation",
   "waitlist-offer",
   "waitlist-offer-expired",

@@ -107,6 +107,9 @@ export const ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES: ReadonlySet<string> =
     // #3340: the supersede-refund notice the recovery queue sends. Same sender
     // module and same `{ bookingId, recipientMemberId }` context as its siblings.
     "superseded-payment-refunded",
+    // #5005 child D: an imported booking's refund given as account credit. Same
+    // sender module and `{ bookingId, recipientMemberId }` context.
+    "imported-refund-credited",
     // src/lib/email/waitlist.ts — a waitlist entry IS a booking row
     "waitlist-confirmation",
     "waitlist-offer",

@@ -1011,4 +1011,128 @@ async function existingBooking(ref: string, guests: Line[]) {
       await expectCensusClean(bookingId);
     }, 120_000);
   });
+
+  describe("giving a cancelled import's refund as account credit (#5005 child D)", () => {
+    const CREDIT_TEMPLATE = "imported-refund-credited";
+
+    /** An imported booking the owner has cancelled: its by-hand refund task, OPEN at the policy's 50%. */
+    async function cancelledImport(ref: string) {
+      const bookingId = importedId((await importFile([line({ ref, member: PEOPLE.owner, amount: "200" })])).result, ref);
+      const { cancelBooking } = await import("@/lib/booking-cancel");
+      expect((await cancelBooking(bookingId, OWNER, "USER", "127.0.0.1", CLUB_FORMAT_TEST)).status).toBe(200);
+      const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId }, select: { id: true, status: true, amountCents: true } });
+      expect(task).toMatchObject({ status: "OPEN", amountCents: 10_000 });
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { bookingId }, select: { id: true } });
+      return { bookingId, taskId: task.id, paymentId: payment.id };
+    }
+
+    async function giveAsCredit(taskId: string, expectedAmountCents = 10_000) {
+      const { giveImportedRefundAsCredit } = await import("@/lib/booking-import/refund-credit");
+      return giveImportedRefundAsCredit({ taskId, actingMemberId: OFFICER, expectedAmountCents, note: "Member asked for credit" }, CLUB_FORMAT_TEST);
+    }
+
+    async function markPaidBack(taskId: string) {
+      const { resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution");
+      return resolveManualRefundTask(
+        { taskId, resolution: "completed", note: "Paid back by bank transfer", actingMemberId: OFFICER, confirmedAmountCents: 10_000, direction: null, recordedNightPrices: null },
+        CLUB_FORMAT_TEST,
+      );
+    }
+
+    /** The hand-back census over the journal (`classifyHandBacks`): its findings, what is open, and the task's debt. */
+    async function handBackJournal(bookingId: string) {
+      const { classifyHandBacks, readBookingHandBackJournal } = await import("@/lib/member-money");
+      const facts = (await readBookingHandBackJournal(prisma, [bookingId])).get(bookingId)!;
+      const [task] = facts.tasks;
+      return { findings: classifyHandBacks(bookingId, facts), openRefundPayableCents: facts.openRefundPayableCents,
+        debt: facts.debts.get(task!.id), paidByBank: facts.payments.has(task!.id) };
+    }
+
+    async function accountCreditNotes(paymentId: string) {
+      const operations = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: paymentId }, select: { queueType: true, requestPayload: true } });
+      return operations.filter((operation) => operation.queueType === "ACCOUNT_CREDIT_NOTE");
+    }
+
+    async function withXeroModule<T>(enabled: boolean, run: () => Promise<T>): Promise<T> {
+      const before = await prisma.clubModuleSettings.findUnique({ where: { id: "default" }, select: { xeroIntegration: true } });
+      await prisma.clubModuleSettings.upsert({ where: { id: "default" }, create: { id: "default", xeroIntegration: enabled }, update: { xeroIntegration: enabled }, select: { xeroIntegration: true } });
+      try {
+        return await run();
+      } finally {
+        if (before) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { xeroIntegration: before.xeroIntegration }, select: { xeroIntegration: true } });
+        else await prisma.clubModuleSettings.delete({ where: { id: "default" }, select: { id: true } });
+      }
+    }
+
+    it.each([true, false])("credits the member, allocates the refund, withdraws the journal debt and queues one Xero note only with Xero on (Xero: %s)", async (xero) => {
+      const { bookingId, taskId, paymentId } = await cancelledImport(xero ? "C1" : "C2");
+      const result = await withXeroModule(xero, () => giveAsCredit(taskId));
+
+      const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: taskId }, select: { status: true, settledAsCreditId: true, completedByMemberId: true, settlementDirection: true } });
+      expect(task).toEqual({ status: "COMPLETED", settledAsCreditId: result.memberCreditId, completedByMemberId: OFFICER, settlementDirection: "REFUND_TO_MEMBER" });
+      const credit = await prisma.memberCredit.findUniqueOrThrow({ where: { id: result.memberCreditId }, select: { memberId: true, amountCents: true, type: true, sourceBookingId: true } });
+      expect(credit).toEqual({ memberId: OWNER, amountCents: 10_000, type: "CANCELLATION_REFUND", sourceBookingId: bookingId });
+      // The allocation against the payment, and the booking ledger's credit line beside no bank refund line.
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { refundedAmountCents: true } })).toEqual({ refundedAmountCents: 10_000 });
+      const lines = await prisma.bookingLedgerLine.findMany({ where: { bookingId }, select: { kind: true, postingKey: true } });
+      expect(lines.filter((ledgerLine) => ledgerLine.postingKey === `credit:${result.memberCreditId}`)).toHaveLength(1);
+      expect(lines.filter((ledgerLine) => ledgerLine.kind === "BANK_REFUND")).toEqual([]);
+      expect(await prisma.bookingEvent.count({ where: { bookingId, type: "CREDITED", amountCents: 10_000 } })).toBe(1);
+      // The journal's refund debt is withdrawn, not paid by bank: both censuses clean, no debt left open.
+      await expectCensusClean(bookingId);
+      expect(await handBackJournal(bookingId)).toMatchObject({ findings: [], openRefundPayableCents: 0, debt: 0, paidByBank: false });
+      const notes = await accountCreditNotes(paymentId);
+      expect(notes).toHaveLength(xero ? 1 : 0);
+      if (xero) expect(notes[0]!.requestPayload).toMatchObject({ refundAmountCents: 10_000, memberCreditId: result.memberCreditId });
+      expect(result.xeroOperationId === null).toBe(!xero);
+      expect(await prisma.emailLog.count({ where: { bookingId, templateName: CREDIT_TEMPLATE } })).toBe(1);
+      expect(stripeCall).not.toHaveBeenCalled();
+    }, 120_000);
+
+    it("settles a task one way only: credit twice, credit then Mark paid back, and a reopen are all refused", async () => {
+      const { bookingId, taskId } = await cancelledImport("C3");
+      await giveAsCredit(taskId);
+      await expect(giveAsCredit(taskId)).rejects.toThrow("already been closed");
+      await expect(markPaidBack(taskId)).rejects.toThrow("already been closed");
+      // A completed task is never put back on the queue (`INV-PAY-099`), so its credit can be spent safely.
+      const { reopenManualRefundTask } = await import("@/lib/manual-refund-task-reopen");
+      await expect(reopenManualRefundTask({ taskId, actingMemberId: OFFICER, note: "Undo" })).rejects.toThrow();
+      expect(await prisma.memberCredit.count({ where: { sourceBookingId: bookingId, type: "CANCELLATION_REFUND" } })).toBe(1);
+      expect(await prisma.emailLog.count({ where: { bookingId, templateName: CREDIT_TEMPLATE } })).toBe(1);
+      await expectCensusClean(bookingId);
+    }, 120_000);
+
+    it("refuses a stale amount, writing nothing", async () => {
+      const { bookingId, taskId } = await cancelledImport("C4");
+      await expect(giveAsCredit(taskId, 9_999)).rejects.toThrow("changed while you were giving it as credit");
+      expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: taskId }, select: { status: true } })).toEqual({ status: "OPEN" });
+      expect(await prisma.memberCredit.count({ where: { sourceBookingId: bookingId } })).toBe(0);
+    }, 120_000);
+
+    it("lets exactly one of two officers settle the task when one clicks each button", async () => {
+      const { bookingId, taskId } = await cancelledImport("C5");
+      const outcomes = await Promise.allSettled([giveAsCredit(taskId), markPaidBack(taskId)]);
+      expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+      const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: taskId }, select: { status: true, settledAsCreditId: true } });
+      expect(task.status).toBe("COMPLETED");
+      const credits = await prisma.memberCredit.count({ where: { sourceBookingId: bookingId, type: "CANCELLATION_REFUND" } });
+      const bankLines = await prisma.bookingLedgerLine.count({ where: { bookingId, kind: "BANK_REFUND" } });
+      // Credit won, or the bank transfer did: never both.
+      expect(outcomes[0]!.status === "fulfilled" ? [credits, bankLines, task.settledAsCreditId !== null] : [credits, bankLines, task.settledAsCreditId !== null])
+        .toEqual(outcomes[0]!.status === "fulfilled" ? [1, 0, true] : [0, 1, false]);
+      await expectCensusClean(bookingId);
+      expect(await handBackJournal(bookingId)).toMatchObject({ findings: [], openRefundPayableCents: 0, paidByBank: outcomes[1]!.status === "fulfilled" });
+    }, 120_000);
+
+    it("refuses a cash booking with no import row, which is paid back by hand as before", async () => {
+      const { bookingId, taskId } = await cancelledImport("C6");
+      // The booking as an ordinary cash booking: no import row names it.
+      await prisma.bookingImportRow.updateMany({ where: { bookingId }, data: { bookingId: null } });
+      await expect(giveAsCredit(taskId)).rejects.toThrow("Only a cancelled imported booking's refund can be given as account credit");
+      expect(await prisma.memberCredit.count({ where: { sourceBookingId: bookingId } })).toBe(0);
+      await markPaidBack(taskId);
+      await expectCensusClean(bookingId);
+      expect(await handBackJournal(bookingId)).toMatchObject({ findings: [], openRefundPayableCents: 0, paidByBank: true });
+    }, 120_000);
+  });
 });

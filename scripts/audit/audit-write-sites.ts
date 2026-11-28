@@ -371,6 +371,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/booking-delete.ts::softDeleteCancelledBookingInTransaction#0": {"category":"booking","sink":"createAuditLog","action":"booking.delete.cancelled.soft"},
   "src/lib/booking-fresh-email-copy.ts::recordSentCopy#0": {"category":"communication","sink":"createAuditLog","action":"booking.email.freshCopySent"},
   "src/lib/booking-guest-acceptance-reprice.ts::settleGuestAcceptanceRepriceAfterCommit#0": {"category":"booking","sink":"logAudit","action":"booking.modify.promo_reprice"},
+  "src/lib/booking-import/refund-credit.ts::giveImportedRefundAsCredit.outcome#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.manual-refund-task.give-as-credit"},
   "src/lib/booking-import/reverse.ts::reverseBookingImport#0": {"category":"booking","sink":"logAudit","action":"booking_import.reversed"},
   "src/lib/booking-import/write.ts::confirmBookingImport#0": {"category":"booking","sink":"logAudit","action":"booking_import.completed"},
   "src/lib/booking-import/write.ts::importOneBooking#0": {"category":"booking","sink":"logAudit","action":"booking_import.booking_imported"},

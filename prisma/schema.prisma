@@ -3519,6 +3519,17 @@ model ManualRefundTask {
   /// because rows completed before this column existed carry no direction and
   /// must stay legal; it constrains every row written from here on.
   settlementDirection ManualRefundTaskDirection?
+  /// #5005 child D (`INV-PAY-044`, owner decision O1, 11 Nov 2026): the account
+  /// credit a cancelled imported booking's hand-back was given as, when an officer
+  /// chose "Give as account credit" instead of paying it back by bank transfer.
+  /// Set in the transaction that completes the task and creates that credit
+  /// (`giveImportedRefundAsCredit`), so a COMPLETED task with it set moved its
+  /// money to the member's account and no bank refund is owed or recorded. NULL on
+  /// every other row. Only a COMPLETED row may carry it
+  /// (`ManualRefundTask_settled_as_credit_completed`). A bare scalar, as
+  /// `MemberCredit.restoredFromBookingId` is: the credit names the booking itself.
+  /// The previous app version never selects or writes it.
+  settledAsCreditId   String?                @unique
   /// #3639 (owner decision 26 Sep 2026, `INV-PAY-106`): set when this task is a
   /// late capture on a cancelled booking held for a treasurer's approval, and it
   /// names that capture's Stripe payment intent. It is the marker (completing

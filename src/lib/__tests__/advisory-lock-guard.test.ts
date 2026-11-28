@@ -1022,6 +1022,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "#4516 (owner decision, 15 Nov 2026, comment 6893252570): reducing a disputed card payment's hand-back lowers the task's amountCents, which every edit, acceptance, paid cancel and refund appeal reads beside refundedAmountCents to size a refund net of what is still promised back (refundableCashNetOfOpenHandBacks), and it must exclude that hand-back's completion and dismissal, which take this key first. The same order as that dismissal: this key, then the booking row (lockBookingRowForOwnerRead), the task re-read, then the Payment row and the booking's disputes re-read (decideJournalHandBackDismissal), then the claim guarded on status OPEN and the amount read, then the journal's part withdrawal (under the Payment row) and the audit row. A lost claim writes nothing. No provider call; no new key.",
     invariant: "INV-LOCK-002",
   },
+  // ── Giving a cancelled imported booking's refund as account credit ──
+  {
+    site: "giveImportedRefundAsCredit#1",
+    tier: "GLOBAL",
+    reason:
+      "#5005 child D (owner decision O1, 11 Nov 2026): the officer's second way to settle a cancelled imported booking's hand-back. It must exclude that task's Mark paid back and dismissal (resolveManualRefundTask takes this key first for a journal hand-back), and it moves refundedAmountCents, which every edit, appeal and paid cancel reads beside the open hand-backs to size a refund. The completion's order: this key, the booking row (lockBookingRowForOwnerRead), the task re-read, the member credit ledger, the Payment row, then the claim guarded on status OPEN and the amount shown, the allocation, the cancellation credit, the journal withdrawal and the Xero note's outbox row. A lost claim writes nothing. No provider call; no new key.",
+    invariant: "INV-LOCK-002",
+  },
   {
     site: "editReviewHeadlineRebase#1",
     tier: "GLOBAL",

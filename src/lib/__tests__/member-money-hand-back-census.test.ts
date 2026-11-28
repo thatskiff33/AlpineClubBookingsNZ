@@ -19,7 +19,7 @@ function task(id: string, overrides: Partial<Task> = {}): Task {
   return {
     id, kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", amountCents: 8_000, paymentId: `${B}-payment`, occurrenceKey: null,
     partPaymentReviewPaymentId: null, reason: `Booking ${B} cancelled, refund by hand.`, lateCaptureApprovalIntentId: null,
-    createdAt: AFTER, completedAt: null, ...overrides,
+    createdAt: AFTER, completedAt: null, settledAsCreditId: null, ...overrides,
   };
 }
 const paidTask = (id: string, overrides: Partial<Task> = {}) => task(id, { status: "COMPLETED", completedAt: AFTER, ...overrides });
@@ -67,6 +67,13 @@ describe("the hand-back classes (#5185)", () => {
 
   it("HAND_BACK_PAID_WITHOUT_EVENT: completed in the era with no live R14", () => {
     expect(kinds(facts({ tasks: [paidTask("unpaid")], debts: new Map([["unpaid", 0]]) }))).toEqual(["HAND_BACK_PAID_WITHOUT_EVENT unpaid"]);
+  });
+
+  it("an imported booking's hand-back given as account credit pays nothing by bank, so no R14 is missing (#5005 child D)", () => {
+    // Its debt was withdrawn, not paid: the drift class still holds it to the closed task.
+    expect(kinds(facts({ tasks: [paidTask("credited", { settledAsCreditId: "credit-1" })], debts: new Map([["credited", 0]]) }))).toEqual([]);
+    expect(kinds(facts({ tasks: [paidTask("credited", { settledAsCreditId: "credit-1" })], debts: new Map([["credited", 8_000]]) })))
+      .toEqual(["HAND_BACK_OBLIGATION_DRIFT credited"]);
   });
 
   it("UNAPPLIED_HAND_BACK: an R14 that paid no debt for a task whose debt is the journal's, or raised in the era", () => {

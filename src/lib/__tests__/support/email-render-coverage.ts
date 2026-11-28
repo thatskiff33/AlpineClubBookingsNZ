@@ -123,6 +123,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "notice-published": "noticePublishedTemplate",
   "refund-request-approved": "refundRequestApprovedTemplate",
   "superseded-payment-refunded": "supersededPaymentRefundedTemplate",
+  "imported-refund-credited": "importedRefundCreditedTemplate",
   "refund-request-declined": "refundRequestDeclinedTemplate",
   "website-contact": "websiteContactTemplate",
   // account

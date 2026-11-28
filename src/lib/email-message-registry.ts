@@ -753,6 +753,13 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency:
       "Once per refunded supersede capture - rare, and only when the member confirmed the old charge before it was cancelled",
   },
+  // #5005 child D: an officer gave a cancelled imported booking's refund as
+  // account credit instead of paying it back by bank transfer (owner decision O1).
+  "imported-refund-credited": {
+    triggerSummary:
+      "An officer gave a cancelled imported booking's refund as account credit, instead of paying it back by bank transfer; the member is told the amount credited",
+    frequency: "Once per refund given as credit",
+  },
   "admin-superseded-payment-refund": {
     triggerSummary:
       "The operator copy of the same event: money left the club with nobody deciding it should, so it is reported with the corrected amount owing beside it",
