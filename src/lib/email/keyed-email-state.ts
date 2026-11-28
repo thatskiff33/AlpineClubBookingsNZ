@@ -12,7 +12,10 @@
  * and the paid booking confirmation (`paid-booking-confirmation-notice.ts`).
  *
  * - `sent`: `SENT`, or `QUEUED` on its first attempt (the stated
- *   crash-during-the-provider-call limit: the provider may have it);
+ *   crash-during-the-provider-call limit: the provider may have it), or such a
+ *   row the stranded-email sweep has since flagged `UNCONFIRMED` at the retry
+ *   ceiling (#5298, `INV-INT-043`): it may still have been delivered, so it
+ *   reads as it did while `QUEUED` until an officer's Try again requeues it;
  * - `withheld`: held back by design, the booking's "No emails" or a
  *   non-production copy. Told, for every decision but the admin waitlist page,
  *   which still shows a live offer nobody was told about;
@@ -20,10 +23,11 @@
  *   (`isReplayableFailedEmail`), or `QUEUED` past its first attempt and
  *   claimed within `replayInFlightWindowMs()` (the cron claims a row as
  *   `QUEUED` while it replays it; the window is the longest a replay can still
- *   be sending, from the transport timeouts). An older such row is left `QUEUED` by a
- *   replay whose `SENT` write failed after the provider accepted it, or that
- *   died mid-send, and nothing moves it on; it reads as `sent`, the same
- *   stated limit as a first attempt (round 3, item 1). A template whose body
+ *   be sending, from the transport timeouts). An older such row is left
+ *   `QUEUED` by a replay whose `SENT` write failed after the provider accepted
+ *   it, or that died mid-send, until the stranded-email sweep flags it
+ *   (`INV-INT-043`); it reads as `sent`, the same stated limit as a first
+ *   attempt (round 3, item 1). A template whose body
  *   is never kept (`booking-confirmed`) is never replayed, so never `retrying`;
  * - `undeliverable`: `FAILED` with nothing left to replay it, or `BOUNCED`
  *   (refused for a suppressed address, or a bounce the mail provider reported
@@ -33,10 +37,10 @@
  * - `not-sent`: no row.
  * Told means `sent` or `withheld`, and nothing else.
  */
-import { EmailLogStatus } from "@prisma/client";
+import { type EmailHandoverState, EmailLogStatus } from "@prisma/client";
 
 import { replayInFlightWindowMs } from "@/lib/email/replay-in-flight";
-import { isReplayableFailedEmail } from "@/lib/email/retry-selection";
+import { isReplayableFailedEmail, isUnconfirmedDeliveryAwaitingOfficer } from "@/lib/email/retry-selection";
 import { prisma } from "@/lib/prisma";
 
 export type KeyedEmailState = "sent" | "withheld" | "retrying" | "undeliverable" | "not-sent";
@@ -45,9 +49,14 @@ export type KeyedEmailState = "sent" | "withheld" | "retrying" | "undeliverable"
 type StatusReading = "sent" | "withheld" | "replaying" | "failed" | "undeliverable";
 
 /** The fields of a keyed email's row the told rule needs. */
-export type KeyedEmailRowStatus = { status: EmailLogStatus; attempts: number; lastAttemptAt: Date };
+export type KeyedEmailRowStatus = {
+  status: EmailLogStatus;
+  attempts: number;
+  lastAttemptAt: Date;
+  handoverState?: EmailHandoverState | null;
+};
 
-function readStatus({ status, attempts, lastAttemptAt }: KeyedEmailRowStatus, now: Date): StatusReading {
+function readStatus({ status, attempts, lastAttemptAt, handoverState }: KeyedEmailRowStatus, now: Date): StatusReading {
   switch (status) {
     case EmailLogStatus.SENT:
       return "sent";
@@ -57,7 +66,7 @@ function readStatus({ status, attempts, lastAttemptAt }: KeyedEmailRowStatus, no
     case EmailLogStatus.SKIPPED_NON_PRODUCTION:
       return "withheld";
     case EmailLogStatus.FAILED:
-      return "failed";
+      return isUnconfirmedDeliveryAwaitingOfficer({ attempts, handoverState }) ? "sent" : "failed";
     case EmailLogStatus.BOUNCED:
       return "undeliverable";
     default: {
@@ -96,7 +105,14 @@ export function keyedEmailRowState(
 export const isToldKeyedEmailState = (state: KeyedEmailState) => state === "sent" || state === "withheld";
 
 /** The columns `keyedEmailRowState` reads. */
-export const KEYED_EMAIL_ROW_SELECT = { status: true, attempts: true, lastAttemptAt: true, htmlBody: true, bookingRetryHtmlBody: true } as const;
+export const KEYED_EMAIL_ROW_SELECT = {
+  status: true,
+  attempts: true,
+  lastAttemptAt: true,
+  handoverState: true,
+  htmlBody: true,
+  bookingRetryHtmlBody: true,
+} as const;
 
 /** The state of the keyed email at `emailLogId`, read outside any transaction. */
 export async function readKeyedEmailState(emailLogId: string): Promise<KeyedEmailState> {

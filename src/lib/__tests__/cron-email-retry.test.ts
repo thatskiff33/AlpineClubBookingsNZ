@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   sendEmail: vi.fn(),
   getAdminEmails: vi.fn(),
   getActiveEmailSuppression: vi.fn(),
+  sweepStrandedQueuedEmails: vi.fn(),
   // #5249: what the replay asks for a cancelled or bumped email's calendar file.
   retryCalendarRemovalAttachments: vi.fn(async () => [] as unknown[]),
 }));
@@ -79,6 +80,13 @@ vi.mock("@/lib/email", () => ({
   // #2548: the retry-exhausted alert resolves its audience through the shared
   // access-role-aware helper instead of querying the legacy ADMIN scalar here.
   getAdminEmails: mocks.getAdminEmails,
+}));
+
+// #5298: the stranded-QUEUED sweep has its own suites (`handover.test.ts`, and
+// on PostgreSQL `stranded-queued-email.realdb.test.ts`); here it only has to run
+// before the selection, so its reads never consume this file's row fixtures.
+vi.mock("@/lib/email/handover", () => ({
+  sweepStrandedQueuedEmails: mocks.sweepStrandedQueuedEmails,
 }));
 
 vi.mock("@/lib/booking-calendar-removal", async (importOriginal) => ({
@@ -190,6 +198,21 @@ describe("retryFailedEmails (issue #820)", () => {
     );
   });
 
+  it("settles stranded QUEUED rows before it selects, so a row handed back is replayed in the same run (#5298)", async () => {
+    const order: string[] = [];
+    mocks.sweepStrandedQueuedEmails.mockImplementationOnce(async () => {
+      order.push("sweep");
+    });
+    mocks.findMany.mockImplementationOnce(async () => {
+      order.push("select");
+      return [];
+    });
+
+    await retryFailedEmails();
+
+    expect(order).toEqual(["sweep", "select"]);
+  });
+
   it("marks a successfully re-sent email as SENT and increments attempts", async () => {
     mocks.findMany.mockResolvedValue([failedEmail({ attempts: 1 })]);
     mocks.sendMail.mockResolvedValue({ messageId: "msg_1" });
@@ -207,7 +230,9 @@ describe("retryFailedEmails (issue #820)", () => {
         htmlBody: "<p>hello</p>",
         bookingRetryHtmlBody: null,
       },
-      data: expect.objectContaining({ status: "QUEUED", attempts: 2 }),
+      // #5298: and records that this run may reach the mail server, so a
+      // crash from here is flagged by the stranded sweep, never re-sent.
+      data: expect.objectContaining({ status: "QUEUED", attempts: 2, handoverState: "STARTED" }),
     });
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
     expect(mocks.update).toHaveBeenCalledWith(
@@ -285,9 +310,26 @@ describe("retryFailedEmails (issue #820)", () => {
     expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1, skipped: 0 });
     // attempts incremented, status restored to FAILED for the next run
     // (the pre-send claim moved it to QUEUED).
-    const updateArg = mocks.update.mock.calls[0][0];
+    // #5298: guarded on the row as this run claimed it (the claim is the first write).
+    const updateArg = mocks.updateMany.mock.calls[1][0];
+    expect(updateArg.where).toMatchObject({ id: "email_1", status: "QUEUED", handoverState: "STARTED", attempts: 1 });
     expect(updateArg.data.attempts).toBe(1);
     expect(updateArg.data.status).toBe("FAILED");
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  // #5298: a replay that outlasted the stranded threshold may have been flagged
+  // UNCONFIRMED at the ceiling; its late failure must not put it back below.
+  it("leaves a row the stranded-email sweep flagged meanwhile, and does not alert again", async () => {
+    mocks.findMany.mockResolvedValue([failedEmail({ attempts: 2 })]);
+    mocks.sendMail.mockRejectedValue(new Error("smtp 421"));
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    mocks.getAdminEmails.mockResolvedValue(["admin@example.test"]);
+
+    await retryFailedEmails();
+
+    expect(mocks.updateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
@@ -976,8 +1018,12 @@ describe("retryFailedEmails clears a stale environment block reason (#3035)", ()
   });
 
   /** The last write this cron made to the row. */
+  // The last row write, by either delegate (#5298: a failed replay's write is a guarded `updateMany`).
   function lastWrite() {
-    return mocks.update.mock.calls.at(-1)?.[0] as {
+    const writes = [...mocks.update.mock.calls, ...mocks.updateMany.mock.calls]
+      .map(([args], index) => ({ args, order: [...mocks.update.mock.invocationCallOrder, ...mocks.updateMany.mock.invocationCallOrder][index]! }))
+      .sort((a, b) => a.order - b.order);
+    return writes.at(-1)?.args as {
       data: Record<string, unknown>;
     };
   }

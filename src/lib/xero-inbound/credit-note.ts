@@ -7,13 +7,15 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { buildCreditNoteAllocationTargets, buildSyntheticAllocationLinkId, buildXeroPaymentDisplayNumber, getCreditNoteAmountCents } from "./amounts";
-import { creditNoteAllocationSnapshotStamp, readStoredCreditNoteSnapshots, retireUnlistedCreditNoteAllocations, withHeldFloorAlerts, writeCurrentCreditNoteAllocations } from "./retire-unlisted-credit-note-allocations";
+import { creditNoteAllocationSnapshotStamp, directRecountPaymentIds, readStoredCreditNoteSnapshots, retireUnlistedCreditNoteAllocations, withHeldFloorAlerts, writeCurrentCreditNoteAllocations } from "./retire-unlisted-credit-note-allocations";
 import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObjectLinks, findPaymentIdsWithCancelledRefundNoteMirror, getDerivedInboundAllocationRole, isDeletedXeroPaymentStatus, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
 import { creditNotePaymentsForAbsence, retireDeletedPaymentLinksAbsentFromPayload } from "./deleted-payment-links";
 import { writeXeroInboundAuditLogs } from "./audit";
 import { type XeroAuditLocalLink } from "./types";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance } from "./credit-note-repairs";
 import { resolveModificationRefundAmountsByPaymentId } from "./modification-note-refunds";
+import { writeCreditNoteLinks } from "./modification-note-status-write";
+import type { BankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { accountCreditNoteHeld, accountCreditNoteRaisedFor, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
 import { isIncludedRefundCreditNoteStatus, isRefundNoteLinkOf, mayRecordAsCanonicalRefundNote, withoutVoidedRefundNoteLinks, xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 
@@ -153,9 +155,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     logger.warn({ err, creditNoteId: creditNote.creditNoteID }, "Could not refresh a credit note's spend reading; its links keep the previous one until the note's next event");
     return {};
   });
-  for (const link of creditNoteLinks) {
-    await upsertXeroObjectLink(withCreditNoteSpendEvidence(link, spendEvidence));
-  }
+  // #5251: a modification note's own status goes in under the Payment rows it is counted on, their totals decided again.
+  const statusFloorAlerts: BankTransferFloorAlert[] = [];
+  await writeCreditNoteLinks(creditNote.creditNoteID!, creditNoteLinks.map((link) => withCreditNoteSpendEvidence(link, spendEvidence)), statusFloorAlerts);
 
   const linkedRefundPaymentIds = creditNoteLinks
     .filter((link) => isRefundNoteLinkOf(link))
@@ -295,9 +297,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       ),
   ]);
 
-  for (const link of resolvedCreditNoteLinks) {
-    await upsertXeroObjectLink(link);
-  }
+  await writeCreditNoteLinks(creditNote.creditNoteID!, resolvedCreditNoteLinks, statusFloorAlerts);
 
   // #4288: a LIVE reading's allocations and refund payments are as old as its
   // status, so neither is written for a payment whose refund-note row (either
@@ -350,10 +350,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // #4449: the writes' and removals' floor alerts are held, then sent for the payments the recount does not decide.
   const { refundedPaymentRepair, voidedMirrorAuditLinks } = await withHeldFloorAlerts(async (held) => {
     await writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts: held.alerts });
-    // #4447: the invoices this reading no longer lists, in the same pass as the
-    // writes above and before the recount. A stored snapshot that refuses the
-    // reading turns nothing off.
-    await retireUnlistedCreditNoteAllocations({
+    // #4447: the invoices this reading no longer lists, in the same pass as the writes above and before
+    // the recount (#5289 A: all of them for a cancelled modification note). A refusing snapshot turns nothing off.
+    const removal = await retireUnlistedCreditNoteAllocations({
       creditNoteId: creditNote.creditNoteID!,
       isModificationNote,
       heldFloorAlerts: held.alerts,
@@ -389,7 +388,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
         role: "REFUND_CREDIT_NOTE",
       }));
 
-    const directPaymentIds = [...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id).concat(voidedMirrorPaymentIds);
+    // #5289 A: a cancelled reading's removed payments are found nowhere else; the recount decides them again.
+    const linkedPaymentIds = [...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id);
+    const directPaymentIds = directRecountPaymentIds({ linkedPaymentIds, voidedMirrorPaymentIds, status: creditNote.status, removedPaymentIds: removal.decidedPaymentIds });
     held.recountedPaymentIds = new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()]);
     const refundedPaymentRepair = await repairRefundedPaymentBusinessState({
       creditNoteId: creditNote.creditNoteID!,
@@ -405,7 +406,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       recomputeModificationRefundAmounts: resolveCurrentModificationRefunds,
     });
     return { refundedPaymentRepair, voidedMirrorAuditLinks };
-  });
+  }, statusFloorAlerts);
 
   const accountCreditAllocationRepair =
     accountCreditPayments.length > 0 || appliedCreditPayments.length > 0

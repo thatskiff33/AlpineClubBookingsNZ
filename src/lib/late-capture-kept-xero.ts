@@ -22,6 +22,7 @@ import { keptCaptureAnchorId } from "@/lib/kept-late-capture-change-receipt";
 import { creditBackLateCaptureRefunds } from "@/lib/late-capture-refund-credit-note";
 import { enqueueAdditionalCaptureReceiptOperation } from "@/lib/additional-capture-receipt-enqueue";
 import { additionalCaptureReceiptKey } from "@/lib/additional-capture-xero-receipt";
+import { RECORDED_BY_ANOTHER_WRITER_PREFIX, additionalCaptureReceiptStoodDown } from "@/lib/additional-capture-receipt-payload";
 import { captureChangeId } from "@/lib/additional-capture-receipt-link";
 import { supplementaryInvoicesMovedOffIntentWhere } from "@/lib/supplementary-invoice-parked-from";
 import { readCreditReleaseCaptureShare } from "@/lib/credit-release-capture-share";
@@ -43,6 +44,7 @@ import {
   keptChangeCaptureRoute,
   keptLateCaptureRecordRoute,
   type KeptChangeCaptureEvidence,
+  type KeptChangeCaptureRoute,
 } from "@/lib/late-capture-kept-xero-rules";
 
 /**
@@ -71,6 +73,9 @@ import {
  *   records it as a payment on that invoice, capped at what Xero shows due;
  *   where nothing bills it, the kept-capture invoice; and where no change
  *   can be read, nothing.
+ *
+ * #4381: a paid-another-way close of the capture's approved refund splits it
+ * the same way, from the same reading ({@link readKeptCaptureRecord}).
  */
 
 /** What the post-commit half of a keep must do. */
@@ -227,6 +232,126 @@ export async function readKeptCaptureRecordedElsewhere(
   return share.ownCents;
 }
 
+/** The capture fields the reading below needs, as each caller already loaded them. */
+type KeptCaptureFacts = { kind: "PRIMARY" | "ADDITIONAL"; paymentId: string; bookingModificationId: string | null; reason: string | null };
+
+/**
+ * #4381 (`INV-SSOT`, `INV-PAY-144`): WHAT DECIDES WHICH XERO DOCUMENT RECORDS
+ * A LATE CAPTURE ON A CANCELLED BOOKING - kept, or its approved refund closed
+ * paid another way. The one reading the keep's decision
+ * ({@link planKeptLateCaptureXeroRecord}), the journal's billed cents
+ * ({@link keptCaptureBilledCents}) and a paid-another-way close's plan
+ * (`paidAnotherWayXeroPlan`) take, so the two doors that record the same kept
+ * money split it the same way.
+ *
+ * The first cut (`keptLateCaptureRecordRoute`) from the payment's primary
+ * invoice. For a change capture on an invoiced booking the per-anchor
+ * supplementary-invoice lock is taken HERE, on the change (else the booking;
+ * `keptCaptureAnchorId`) - a caller already holding it re-takes it, a no-op;
+ * only the dialog's read, which decides nothing, takes none - and under it,
+ * in order: the task's live kept-capture invoice row, the
+ * capture's own receipt row, and only where neither exists the evidence's
+ * route (`keptChangeCaptureRoute`), with what other writers record
+ * (`readKeptCaptureRecordedElsewhere`) for the `kept-invoice` and
+ * `change-unknown` routes. No write.
+ */
+export type KeptCaptureRecordReading =
+  | { firstCut: "kept-invoice" }
+  | (KeptChangeCaptureReading & { liveKeptInvoice: { id: string }; receiptRow: null; decided: null })
+  | (KeptChangeCaptureReading & { liveKeptInvoice: null; receiptRow: KeptCaptureReceiptRow; decided: null })
+  | (KeptChangeCaptureReading & {
+      liveKeptInvoice: null;
+      receiptRow: null;
+      decided: { route: KeptChangeCaptureRoute; elsewhere: number | "all" };
+    });
+
+type KeptChangeCaptureReading = {
+  firstCut: "by-change-evidence";
+  anchorId: string;
+  changeId: string | null;
+  primaryInvoiceId: string | null;
+};
+
+/**
+ * The capture's own receipt row (`ADDITIONAL_CAPTURE_RECEIPT`) in any status
+ * but CANCELLED, the newest. `stoodDown` (#4381): it finished without sending,
+ * because another writer records the capture (`additionalCaptureReceiptStoodDown`),
+ * so it is not the capture's record and no receipt is on its way.
+ */
+export type KeptCaptureReceiptRow = {
+  id: string;
+  status: string;
+  manuallyResolvedAt: Date | null;
+  requestPayload: Prisma.JsonValue;
+  stoodDown: boolean;
+};
+
+/** What {@link readKeptCaptureRecord} reads when it takes no lock: the repair tool's snapshot and the dialog's promise. */
+export type KeptCaptureRecordStore = RecorderStore & Pick<Prisma.TransactionClient, "payment" | "xeroObjectLink" | "xeroSyncOperation">;
+
+type KeptCaptureRecordInput = {
+  bookingId: string;
+  paymentIntentId: string;
+  manualRefundTaskId: string;
+  capture: KeptCaptureFacts;
+  /**
+   * False only for a read that decides nothing, which holds no lock: the
+   * paid-another-way dialog's promise, and the repair tool's snapshot (whose
+   * apply decides again under the locks).
+   */
+  lockAnchor: boolean;
+};
+
+export async function readKeptCaptureRecord(store: Prisma.TransactionClient, input: KeptCaptureRecordInput): Promise<KeptCaptureRecordReading>;
+export async function readKeptCaptureRecord(
+  store: KeptCaptureRecordStore,
+  input: KeptCaptureRecordInput & { lockAnchor: false },
+): Promise<KeptCaptureRecordReading>;
+export async function readKeptCaptureRecord(
+  store: KeptCaptureRecordStore | Prisma.TransactionClient,
+  input: KeptCaptureRecordInput,
+): Promise<KeptCaptureRecordReading> {
+  const { capture, paymentIntentId } = input;
+  const payment = await store.payment.findUnique({ where: { id: capture.paymentId }, select: { xeroInvoiceId: true } });
+  const paymentLinks = await store.xeroObjectLink.findMany({
+    where: { localModel: "Payment", localId: capture.paymentId, xeroObjectType: "INVOICE", role: "PRIMARY_INVOICE", active: true },
+    select: { role: true, xeroObjectType: true, active: true, xeroObjectId: true },
+  });
+  const firstCut = keptLateCaptureRecordRoute({
+    captureKind: capture.kind,
+    bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({ paymentXeroInvoiceId: payment?.xeroInvoiceId, paymentLinks }),
+  });
+  if (firstCut === "kept-invoice") return { firstCut };
+
+  const changeId = captureChangeId(capture);
+  const anchorId = keptCaptureAnchorId(capture, input.bookingId);
+  if (input.lockAnchor) await lockSupplementaryInvoiceAnchor(store as Prisma.TransactionClient, anchorId);
+  // Review A-UNSYNCED-KEEP: the active link's id where the field drifted, so the full reading runs.
+  const primaryInvoiceId = payment?.xeroInvoiceId ?? paymentLinks[0]?.xeroObjectId ?? null;
+  const reading: KeptChangeCaptureReading = { firstCut, anchorId, changeId, primaryInvoiceId };
+  const liveKeptInvoice = await findLiveKeptReceiptRow(store, input.manualRefundTaskId);
+  if (liveKeptInvoice) return { ...reading, liveKeptInvoice: { id: liveKeptInvoice.id }, receiptRow: null, decided: null };
+  const receiptRow = await store.xeroSyncOperation.findFirst({
+    where: { correlationKey: additionalCaptureReceiptKey(paymentIntentId), status: { not: "CANCELLED" } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, status: true, manuallyResolvedAt: true, requestPayload: true, responsePayload: true },
+  });
+  if (receiptRow) {
+    const { responsePayload, ...row } = receiptRow;
+    const stoodDown = additionalCaptureReceiptStoodDown({ status: row.status, responsePayload });
+    return { ...reading, liveKeptInvoice: null, receiptRow: { ...row, stoodDown }, decided: null };
+  }
+  const route = keptChangeCaptureRoute(
+    await readKeptChangeCaptureEvidence(store, { paymentIntentId, changeId, bookingId: input.bookingId, primaryInvoiceId }),
+  );
+  // Review M-F2: another writer's part of the capture, by the one reading.
+  const elsewhere =
+    route === "kept-invoice" || route === "change-unknown"
+      ? await readKeptCaptureRecordedElsewhere(store, { bookingId: input.bookingId, primaryInvoiceId, paymentIntentId, changeId })
+      : 0;
+  return { ...reading, liveKeptInvoice: null, receiptRow: null, decided: { route, elsewhere } };
+}
+
 /**
  * THE IN-TRANSACTION HALF of a keep, the one decision of which document
  * records a kept capture. Run by `resolveManualRefundTask` after its
@@ -279,20 +404,6 @@ export async function planKeptLateCaptureXeroRecord(params: {
   });
   if (!transaction || !task || decision.recordCents === 0) return { kind: "none" };
 
-  const payment = await store.payment.findUnique({
-    where: { id: transaction.paymentId },
-    select: { xeroInvoiceId: true },
-  });
-  const paymentLinks = await store.xeroObjectLink.findMany({
-    where: {
-      localModel: "Payment",
-      localId: transaction.paymentId,
-      xeroObjectType: "INVOICE",
-      role: "PRIMARY_INVOICE",
-      active: true,
-    },
-    select: { role: true, xeroObjectType: true, active: true, xeroObjectId: true },
-  });
   const queueKeptInvoice = async (capturedCents = decision.recordCents): Promise<KeptLateCaptureXeroPlan> => {
     const queued = await enqueueXeroKeptLateCaptureInvoiceOperation({
       manualRefundTaskId: params.manualRefundTaskId,
@@ -305,49 +416,25 @@ export async function planKeptLateCaptureXeroRecord(params: {
     });
     return { kind: "kept-invoice-queued", queueOperationId: queued.queueOperationId };
   };
-  const firstCut = keptLateCaptureRecordRoute({
-    captureKind: transaction.kind,
-    bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({
-      paymentXeroInvoiceId: payment?.xeroInvoiceId,
-      paymentLinks,
-    }),
-  });
-  if (firstCut === "kept-invoice") return queueKeptInvoice();
-
-  // #4324: a change payment on an invoiced booking, decided under its anchor.
-  const changeId = captureChangeId(transaction);
-  const anchorId = keptCaptureAnchorId(transaction, params.bookingId);
-  await lockSupplementaryInvoiceAnchor(store, anchorId);
-  if (await findLiveKeptReceiptRow(store, params.manualRefundTaskId)) return queueKeptInvoice();
-  const receiptRow = await store.xeroSyncOperation.findFirst({
-    where: { correlationKey: additionalCaptureReceiptKey(params.paymentIntentId), status: { not: "CANCELLED" } },
-    select: { id: true },
-  });
-  if (receiptRow) return { kind: "receipt-queued", queueOperationId: receiptRow.id };
-  // Review A-UNSYNCED-KEEP: the active link's id where the field drifted, so the full reading runs.
-  const primaryInvoiceId = payment?.xeroInvoiceId ?? paymentLinks[0]?.xeroObjectId ?? null;
-  const evidence = await readKeptChangeCaptureEvidence(store, {
-    paymentIntentId: params.paymentIntentId,
-    changeId,
+  // #4324: a change payment on an invoiced booking is decided under its anchor, which the reading takes.
+  const reading = await readKeptCaptureRecord(store, {
     bookingId: params.bookingId,
-    primaryInvoiceId,
+    paymentIntentId: params.paymentIntentId,
+    manualRefundTaskId: params.manualRefundTaskId,
+    capture: transaction,
+    lockAnchor: true,
   });
-  const route = keptChangeCaptureRoute(evidence);
+  if (reading.firstCut === "kept-invoice" || reading.liveKeptInvoice) return queueKeptInvoice();
+  if (reading.receiptRow) return { kind: "receipt-queued", queueOperationId: reading.receiptRow.id };
+  const { route, elsewhere } = reading.decided;
   if (route === "change-invoice") {
     return reviveKeptCaptureChangeInvoice(params, {
-      anchorId,
+      anchorId: reading.anchorId,
       transaction: { status: transaction.status, amountCents: transaction.amountCents },
     });
   }
   const logged = { paymentIntentId: params.paymentIntentId, manualRefundTaskId: params.manualRefundTaskId };
   if (route === "kept-invoice" || route === "change-unknown") {
-    // Review M-F2: another writer's part of the capture, by the one reading.
-    const elsewhere = await readKeptCaptureRecordedElsewhere(store, {
-      bookingId: params.bookingId,
-      primaryInvoiceId,
-      paymentIntentId: params.paymentIntentId,
-      changeId,
-    });
     if (elsewhere === "all" || elsewhere >= decision.recordCents) {
       logger.info({ ...logged, elsewhere }, "A kept late card payment is recorded by another Xero document, or held for an officer by the credit-release sweep; nothing more was queued");
       return { kind: "none" };
@@ -409,7 +496,7 @@ async function reviveKeptCaptureChangeInvoice(
     // document records the payment, the revived invoice may go to Xero unpaid, so that is a warning.
     const context = { paymentIntentId: params.paymentIntentId, manualRefundTaskId: params.manualRefundTaskId, reason: receipt.reason };
     const message = "A kept late card payment's revived change invoice has no receipt queued beside it; the reason says why";
-    if (receipt.reason.startsWith("recorded-by-")) logger.info(context, message);
+    if (receipt.reason.startsWith(RECORDED_BY_ANOTHER_WRITER_PREFIX)) logger.info(context, message);
     // No primary invoice id beside an active link is drift, as on the receipt route below.
     else if (receipt.reason === "no-primary-invoice") logger.error(context, message);
     else logger.warn(context, message);
@@ -434,39 +521,17 @@ export async function keptCaptureBilledCents(store: Prisma.TransactionClient, in
     select: { kind: true, paymentId: true, bookingModificationId: true, reason: true },
   });
   if (!transaction) return 0;
-  const payment = await store.payment.findUnique({ where: { id: transaction.paymentId }, select: { xeroInvoiceId: true } });
-  const paymentLinks = await store.xeroObjectLink.findMany({
-    where: { localModel: "Payment", localId: transaction.paymentId, xeroObjectType: "INVOICE", role: "PRIMARY_INVOICE", active: true },
-    select: { role: true, xeroObjectType: true, active: true, xeroObjectId: true },
-  });
-  const firstCut = keptLateCaptureRecordRoute({ captureKind: transaction.kind, bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({
-    paymentXeroInvoiceId: payment?.xeroInvoiceId, paymentLinks,
-  }) });
-  if (firstCut === "kept-invoice") {
-    return keptCaptureBilledCentsFromReading({ firstCut, hasLiveKeptReceipt: false, hasReceiptOperation: false, changeRoute: null, elsewhere: 0, amountCents: input.amountCents });
-  }
-  const hasLiveKeptReceipt = (await findLiveKeptReceiptRow(store, input.manualRefundTaskId)) !== null;
-  const receiptRow = hasLiveKeptReceipt ? null : await store.xeroSyncOperation.findFirst({
-    where: { correlationKey: additionalCaptureReceiptKey(input.paymentIntentId), status: { not: "CANCELLED" } },
-    select: { id: true },
-  });
-  const hasReceiptOperation = receiptRow !== null;
-  let changeRoute: ReturnType<typeof keptChangeCaptureRoute> | null = null;
-  let elsewhere: number | "all" = 0;
-  if (!hasLiveKeptReceipt && !hasReceiptOperation) {
-    const primaryInvoiceId = payment?.xeroInvoiceId ?? paymentLinks[0]?.xeroObjectId ?? null;
-    const changeId = captureChangeId(transaction);
-    changeRoute = keptChangeCaptureRoute(await readKeptChangeCaptureEvidence(store, {
-      paymentIntentId: input.paymentIntentId, changeId, bookingId: input.bookingId, primaryInvoiceId,
-    }));
-    if (changeRoute !== "receipt" && changeRoute !== "change-invoice") {
-      elsewhere = await readKeptCaptureRecordedElsewhere(store, {
-        bookingId: input.bookingId, primaryInvoiceId, paymentIntentId: input.paymentIntentId, changeId,
-      });
-    }
+  const reading = await readKeptCaptureRecord(store, { ...input, capture: transaction, lockAnchor: true });
+  if (reading.firstCut === "kept-invoice") {
+    return keptCaptureBilledCentsFromReading({ firstCut: reading.firstCut, hasLiveKeptReceipt: false, hasReceiptOperation: false, changeRoute: null, elsewhere: 0, amountCents: input.amountCents });
   }
   return keptCaptureBilledCentsFromReading({
-    firstCut, hasLiveKeptReceipt, hasReceiptOperation, changeRoute, elsewhere, amountCents: input.amountCents,
+    firstCut: reading.firstCut,
+    hasLiveKeptReceipt: reading.liveKeptInvoice !== null,
+    hasReceiptOperation: reading.receiptRow !== null,
+    changeRoute: reading.decided?.route ?? null,
+    elsewhere: reading.decided?.elsewhere ?? 0,
+    amountCents: input.amountCents,
   });
 }
 

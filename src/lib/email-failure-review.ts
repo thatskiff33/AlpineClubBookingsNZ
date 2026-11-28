@@ -10,6 +10,7 @@ import { SENSITIVE_EMAIL_LOG_TEMPLATES } from "@/lib/email/internal";
 import {
   EMAIL_RETRY_BACKOFF_MS,
   EMAIL_RETRY_MAX_ATTEMPTS,
+  isUnconfirmedDeliveryAwaitingOfficer,
   RETAINS_REPLAYABLE_EMAIL_BODY,
 } from "@/lib/email/retry-selection";
 import { normalizeEmailAddress } from "@/lib/email-suppression";
@@ -113,6 +114,11 @@ interface ExhaustedEmailFailure {
    * whose booking still exists; null for every other failure.
    */
   freshCopyHref: string | null;
+  /**
+   * #5298 (INV-INT-043): the app stopped while sending it, so it may already
+   * have reached the recipient. Try again could then send it twice.
+   */
+  deliveryUnconfirmed: boolean;
   reviewedAt: string | null;
   reviewedById: string | null;
   reviewNote: string | null;
@@ -157,6 +163,7 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
         createdAt: true,
         bookingId: true,
         bookingRecipientMemberId: true,
+        handoverState: true,
       },
     }),
     // The scan above is a window; this is the real total the operator is told.
@@ -275,6 +282,7 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
         blockedAddressSet.has(normalizeEmailAddress(failure.to)),
       ),
       freshCopyHref,
+      deliveryUnconfirmed: isUnconfirmedDeliveryAwaitingOfficer(failure),
       reviewedAt: review?.createdAt.toISOString() ?? null,
       reviewedById: review?.actorMemberId ?? review?.memberId ?? null,
       reviewNote: readReviewNote(review?.metadata),

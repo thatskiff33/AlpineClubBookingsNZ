@@ -87,6 +87,10 @@ vi.mock("@/lib/email", () => ({
   getAdminEmails: mocks.getAdminEmails,
 }));
 
+// #5298: the stranded-QUEUED sweep runs first and has its own suites; stubbed so
+// its reads never consume this file's row fixtures.
+vi.mock("@/lib/email/handover", () => ({ sweepStrandedQueuedEmails: vi.fn() }));
+
 import { retryFailedEmails } from "@/lib/cron-email-retry";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 

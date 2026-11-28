@@ -88,13 +88,13 @@ describe("GET /api/admin/ai-spend-currency", () => {
       ok: false,
       response: new Response(null, { status: 403 }),
     });
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-spend-currency"));
     expect(res.status).toBe(403);
     expect(mocks.loadAiSpendCurrency).not.toHaveBeenCalled();
   });
 
   it("returns the identity rate, flagged unconfigured, for a non-NZD club with no row", async () => {
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/admin/ai-spend-currency"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       clubCurrency: "AUD",
@@ -116,7 +116,7 @@ describe("GET /api/admin/ai-spend-currency", () => {
       rateSetByMemberId: "admin-9",
       isConfigured: true,
     });
-    const json = await (await GET()).json();
+    const json = await (await GET(new Request("http://localhost/api/admin/ai-spend-currency"))).json();
     expect(json).toMatchObject({
       isConfigured: true,
       clubUnitsPerNzdMicros: 920_000,

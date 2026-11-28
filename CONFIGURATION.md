@@ -2829,7 +2829,7 @@ complaint reports only from SES's SNS notifications (`notificationType`), not
 from SES event publishing. Supporting another service is an adapter for its
 reports and an entry for its reply format
 ([Email Retry Lifecycle](docs/STATE_MACHINES.md#email-retry-lifecycle),
-`INV-INT-043`). See
+`INV-INT-044`). See
 [Amazon SES SMTP issues](https://docs.aws.amazon.com/ses/latest/dg/troubleshoot-smtp.html)
 (the reply format) and
 [Amazon SNS notification contents for Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/notification-contents.html).

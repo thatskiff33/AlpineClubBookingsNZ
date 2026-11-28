@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { bookingMessageWordingSchema } from "@/lib/admin-support-api/messages";
+import {
+  BOOKING_MESSAGE_PREVIEW_CONNECTION_SHAPE,
+  type BookingMessagePreviewAnswer,
+} from "@/lib/connection-shapes/support-messages";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   BOOKING_MESSAGE_KEYS,
   renderBookingMessageTemplate,
@@ -12,12 +17,8 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bookingMessageKeySet = new Set<string>(BOOKING_MESSAGE_KEYS);
 
-const previewSchema = z
-  .object({
-    messageKey: z.string().trim().min(1),
-    bodyText: z.string(),
-  })
-  .strict();
+// The same body the save takes (admin-support-api/messages.ts), which the AI
+// app action `preview_booking_message` offers too (ALP-724).
 
 export async function POST(request: NextRequest) {
   // Preview only renders a message with sample data (no mutation), so a
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = previewSchema.safeParse(body);
+  const parsed = bookingMessageWordingSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -57,9 +58,10 @@ export async function POST(request: NextRequest) {
   const messageKey = parsed.data.messageKey as BookingMessageKey;
   const sampleData = await buildSampleBookingMessageData();
 
-  return NextResponse.json({
+  const answer: BookingMessagePreviewAnswer = {
     messageKey,
     bodyText: validation.bodyText,
     rendered: renderBookingMessageTemplate(validation.bodyText, sampleData),
-  });
+  };
+  return connectionJson(request, answer, BOOKING_MESSAGE_PREVIEW_CONNECTION_SHAPE);
 }

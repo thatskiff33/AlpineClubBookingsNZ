@@ -4,7 +4,7 @@ import type { EmailComplaintReplayAlert } from "@/lib/admin-alert-once-replayabl
 
 /*
   #5469: what one bounce or complaint report does, through the SES adapter and
-  the one rule (`email/delivery-feedback.ts`, INV-INT-043).
+  the one rule (`email/delivery-feedback.ts`, INV-INT-044).
   - A bounce marks only the email the report names: by the stored server id,
     or, for a row with no stored id, by the Message-ID header the app sent
     (owner decision, option A, 27 Nov 2026).

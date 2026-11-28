@@ -297,8 +297,8 @@ describe("N-10: EmailLog tracking", () => {
       templateName: "test-template",
     });
 
-    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
-      where: { id: "log-1" },
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: "log-1" }),
       data: expect.objectContaining({
         status: "SENT",
         messageId: "msg-123",
@@ -332,8 +332,9 @@ describe("N-10: EmailLog tracking", () => {
       templateName: "test-template",
     });
 
-    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
-      where: { id: "log-1" },
+    // #5298: the SENT write is guarded on the row still being this sender's.
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: "log-1" }),
       data: expect.objectContaining({
         status: "SENT",
         messageId: "<msg-123@example.test>",
@@ -348,7 +349,11 @@ describe("N-10: EmailLog tracking", () => {
     const origEnv = process.env.NODE_ENV;
     (process.env as Record<string, string>).NODE_ENV ="production";
 
-    mockPrisma.emailLog.update.mockRejectedValueOnce(new Error("EmailLog update failed"));
+    // #5298: the SENT write, not the hand-over claim before it, fails.
+    mockPrisma.emailLog.updateMany.mockImplementation(async ({ data }: { data: { status?: string } }) => {
+      if (data.status === "SENT") throw new Error("EmailLog update failed");
+      return { count: 1 };
+    });
 
     const { sendEmail } = await import("../email");
 
@@ -389,8 +394,8 @@ describe("N-10: EmailLog tracking", () => {
       })
     ).rejects.toThrow("SMTP connection refused");
 
-    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
-      where: { id: "log-1" },
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: "log-1" }),
       data: expect.objectContaining({
         status: "FAILED",
         errorMessage: "SMTP connection refused",
@@ -434,8 +439,8 @@ describe("N-10: EmailLog tracking", () => {
         status: "QUEUED",
       }),
     });
-    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
-      where: { id: "log-1" },
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: "log-1" }),
       data: expect.objectContaining({
         status: "BOUNCED",
         htmlBody: null,
@@ -492,7 +497,11 @@ describe("N-10: EmailLog tracking", () => {
     (process.env as Record<string, string>).NODE_ENV ="production";
 
     mockTransporter.sendMail.mockRejectedValueOnce(new Error("SMTP connection refused"));
-    mockPrisma.emailLog.update.mockRejectedValueOnce(new Error("EmailLog update failed"));
+    // #5298: the FAILED write, not the hand-over claim before it, fails.
+    mockPrisma.emailLog.updateMany.mockImplementation(async ({ data }: { data: { status?: string } }) => {
+      if (data.status === "FAILED") throw new Error("EmailLog update failed");
+      return { count: 1 };
+    });
 
     const { sendEmail } = await import("../email");
 
@@ -506,8 +515,8 @@ describe("N-10: EmailLog tracking", () => {
       })
     ).rejects.toThrow("SMTP connection refused");
 
-    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
-      where: { id: "log-1" },
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: "log-1" }),
       data: expect.objectContaining({
         status: "FAILED",
         errorMessage: "SMTP connection refused",

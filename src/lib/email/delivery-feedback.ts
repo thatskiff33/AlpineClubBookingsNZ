@@ -10,7 +10,7 @@ import { MAIL_SERVICE_LABEL, type MailService } from "./provider-message-id";
 
 /**
  * #5469: THE ONE RULE FOR A BOUNCE OR COMPLAINT REPORT, whichever mail service
- * sent it (`INV-INT-043`). Each service has an adapter that turns its own
+ * sent it (`INV-INT-044`). Each service has an adapter that turns its own
  * report into a `DeliveryFeedbackEvent` (SES: `ses-feedback.ts`, reached from
  * the SNS webhook); this module is the only place the event is acted on.
  * Adding a service is an adapter, a route and a `provider-message-id.ts`
