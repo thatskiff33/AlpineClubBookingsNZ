@@ -2957,6 +2957,57 @@ mispricing a booking.
   match the same unsent claim, and only one deletes it. Proved on PostgreSQL by
   `admin-alert-once-sweep.realdb.test.ts` (each order, behind a held row).
 
+#### Stranded QUEUED email sweep against the sender's hand-over (#5298)
+
+- **Email hand-over claim** — `src/lib/email/handover.ts`
+  (`claimEmailHandover`, `sweepStrandedQueuedEmails`, #5298, `INV-INT-043`),
+  called from `src/lib/email/core.ts` (`sendEmail`) and
+  `src/lib/cron-email-retry.ts` (`retryFailedEmails`, sweep first). The sender
+  moves its own `EmailLog` row from `handoverState` `PENDING` to `STARTED` with
+  one `updateMany` guarded on id, `QUEUED`, `PENDING` and attempts 1 (the
+  previous release's retry job claims a row the sweep handed back without
+  moving it off `PENDING`, and raises attempts), and calls the mail server only
+  if it won. Every other write the sender makes to its row
+  (`senderEmailRow`: the booking gate, suppression, environment gate, dev-mode,
+  SENT and FAILED writes) is guarded the same way: on the claim's own guard
+  before the claim, on `STARTED` at the claim's `lastAttemptAt` after it, so a
+  sender that stalls past the threshold cannot write over a row the sweep has
+  settled. A failed replay's FAILED write is guarded on the row as the retry
+  job claimed it, for the same reason. The sweep settles a row whose
+  `lastAttemptAt` is strictly older than `strandedQueuedAfterMs()`, the
+  greater of 30 minutes and `replayInFlightWindowMs()` (up to about 110
+  minutes with the largest transport timeouts), with one `updateMany` guarded
+  on the row exactly as read (status, hand-over state,
+  attempts, `lastAttemptAt`, and for a re-send a body kept), always moving it
+  off `QUEUED`. Both take the one row's lock; PostgreSQL re-checks the loser's
+  guard against the committed row, so it matches nothing: a late sender sends
+  nothing (`handover_lost`), and a sweep after the sender's claim leaves the row
+  alone. The retry job's own `FAILED -> QUEUED` claim now also writes `STARTED`,
+  so a crash after it is flagged, never re-sent. No transaction, advisory key,
+  tier or order (INV-LOCK-001, INV-LOCK-002); this entry is the site's
+  registration (INV-LOCK-003). The provider call stays outside any transaction.
+
+  Reconciled with #5255's once-ever alert row (`recordClaimedEmailAttempt`
+  writes the same `PENDING` row in its confirm transaction, then the sender
+  claims as above), #4669's `releaseUnreceivedAlertCopies` (touches only
+  `FAILED` rows at attempts 1; a sweep re-send keeps attempts at 1 and leaves
+  the body, so its count is unchanged; a stranded owner-retried alert
+  (`isOwnerRetriedAlertTemplate`: a caller-retried alert, or one sent through
+  `sendAdminAlertOnceEverWithTakeover`, whose owner takes a held claim with no
+  sent marker over; `admin-alert-once-census.test.ts` pins that set to the
+  takeover callers) is never re-sent by the sweep but released the same way,
+  `FAILED` at attempts 1 with no body, because its owner sends it again, and
+  neither admin alert sender reports its lost hand-over as queued, so that
+  owner does; when another
+  recipient received the alert, or the retry job holds another recipient's
+  copy, the owner has stopped, so the sender fails the
+  lost copy with its body kept, guarded like the claim, and the retry job
+  replays it) and #4963's Try again (a `FAILED` row
+  at the ceiling; the next retry claim writes `STARTED`). Proved on PostgreSQL
+  by `stranded-queued-email.realdb.test.ts` (each order, behind a held row; a
+  stalled sender resuming through the real `sendEmail`; a sender and a replay
+  stalled inside the hand-over; two racing sweeps; a stranded takeover alert).
+
 #### Member photo writer (epic #171)
 
 - **Member photo writer** — `src/app/api/members/[id]/photo/route.ts` (epic #171):

@@ -425,7 +425,7 @@ export async function checkAgeUpMembers(): Promise<{
           is the number that tells a live club wrongly declared a copy from a
           genuine one (owner decision 1, 23 Aug 2026).
         */
-        const handoffSent = handoffOutcome.status === "sent";
+        const handoffSent = ["sent", "handover_lost"].includes(handoffOutcome.status); // #5298: the sweep sends a lost hand-over
         const handoffTerminalHere =
           handoffOutcome.status === "withheld_for_environment" &&
           handoffOutcome.reason === "environment_non_production";
